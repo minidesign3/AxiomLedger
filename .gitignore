@@ -1,0 +1,64 @@
+# ==============================================================================
+# AxiomLedger .gitignore
+# Protects API keys, credentials, private financial/bank data, and build/OS files
+# ==============================================================================
+
+# --- Secrets, API Keys & Auth Credentials ---
+.env
+.env.*
+.streamlit/secrets.toml
+.axiom_memory.json
+.axiom_accounts.json
+credentials.json
+secrets.json
+*.pem
+*.key
+*.crt
+
+# --- Private Financial, Bank & Loan Data ---
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.csv
+*.xlsx
+*.xls
+*.ods
+*.pdf
+*.zip
+*.png
+*.jpg
+*.jpeg
+
+# --- Python & Virtual Environments ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Logs ---
+*.log
+
+# --- OS, IDE & Editor Artifacts ---
+.directory
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- AI / Assistant Tooling ---
+.aider*
+.aider-desk/
