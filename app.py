@@ -46,7 +46,7 @@ if not auth_status:
         )
 
         if st.session_state.get("_session_expired_notice"):
-            st.warning("Session locked after 30 minutes of inactivity. Please sign in again.")
+            st.warning("Session locked after 60 minutes of inactivity. Please sign in again.")
 
         # Support both newer (0.3.x/0.4.x) and older (0.2.x) streamlit-authenticator APIs
         try:

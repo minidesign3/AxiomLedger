@@ -575,6 +575,14 @@ def _safe_vault_segment(name: str) -> str:
     return cleaned or "unnamed"
 
 
+def get_vault_dir(entity: str, tax_year: str, bucket: str) -> Path:
+    """Return the local File Vault directory path `data/vault/<Entity>/<TaxYear>/<Bucket>`."""
+    ent_dir = _safe_vault_segment(entity)
+    yr_dir = _safe_vault_segment(tax_year)
+    bkt_dir = _safe_vault_segment(bucket)
+    return VAULT_ROOT_DIR / ent_dir / yr_dir / bkt_dir
+
+
 def save_raw_file_to_vault(
     entity: str,
     tax_year: str,
@@ -5185,7 +5193,7 @@ def get_auth_config() -> dict:
     }
 
 
-SESSION_INACTIVITY_TIMEOUT_SEC = 30 * 60  # 30 minutes
+SESSION_INACTIVITY_TIMEOUT_SEC = 60 * 60  # 60 minutes
 
 
 def _load_active_auth_session() -> dict[str, object] | None:
@@ -5240,14 +5248,14 @@ def _clear_active_auth_session() -> None:
 def sync_and_touch_auth_session(authenticator: stauth.Authenticate | None = None) -> bool:
     """
     Synchronize session authentication state across pages/reruns and enforce a
-    strict 30-minute sliding inactivity timeout:
-    - If idle for > 30 minutes (1,800 seconds), clears session and logs the user out.
-    - If active within the last 30 minutes, restores/keeps the session alive and updates `last_active_ts`.
+    strict 60-minute sliding inactivity timeout:
+    - If idle for > 60 minutes (3,600 seconds), clears session and logs the user out.
+    - If active within the last 60 minutes, restores/keeps the session alive and updates `last_active_ts`.
     """
     now = time.time()
     persisted = _load_active_auth_session()
 
-    # Check if persisted session has expired due to > 30 minutes of inactivity
+    # Check if persisted session has expired due to > 60 minutes of inactivity
     if isinstance(persisted, dict) and persisted.get("authenticated"):
         last_ts = float(persisted.get("last_active_ts") or 0.0)
         if last_ts > 0 and (now - last_ts) > SESSION_INACTIVITY_TIMEOUT_SEC:
@@ -5910,6 +5918,9 @@ def _delete_file_record_from_sqlite(file_id: str, delete_vault_file: bool = True
                     try:
                         if vpath.exists() and vpath.is_file():
                             vpath.unlink()
+                        sidecar_md = Path(f"{vpath}.ocr.md")
+                        if sidecar_md.exists() and sidecar_md.is_file():
+                            sidecar_md.unlink()
                     except Exception:
                         pass
             conn.execute("DELETE FROM file_transactions WHERE file_id = ?", (file_id,))
@@ -5988,6 +5999,130 @@ def _load_uploaded_files_from_sqlite(entity: str, tax_year: str) -> list[dict[st
                         "note": str(frow["note"] or ""),
                     }
                 )
+
+    # Auto-repair any 0-row CSV records that previously failed due to bank preamble headers (e.g., ASB CSVs)
+    # and auto-recover any orphaned files sitting in `data/vault/<Entity>/<Year>/<Bucket>/` on disk.
+    repaired_or_recovered = False
+    for rec in loaded:
+        if (
+            rec.get("bucket") == "csv"
+            and isinstance(rec.get("df"), pd.DataFrame)
+            and rec["df"].empty
+            and "parse warning" in str(rec.get("note", "")).lower()
+            and rec.get("vault_path")
+        ):
+            vp = Path(str(rec["vault_path"]))
+            if not vp.is_absolute():
+                vp = Path(__file__).resolve().parent / vp
+            if vp.exists() and vp.is_file():
+                try:
+                    raw_df = _read_bank_csv_bytes(vp.read_bytes())
+                    if not raw_df.empty:
+                        norm_df = (
+                            raw_df.copy()
+                            if list(raw_df.columns) == STANDARD_COLUMNS
+                            else normalize_financial_dataframe(raw_df)
+                        )
+                        if not norm_df.empty:
+                            rec["df"] = apply_rule_categorization(norm_df, entity=entity)
+                            rec["note"] = ""
+                            _save_file_record_to_sqlite(entity, tax_year, rec)
+                            repaired_or_recovered = True
+                except Exception:
+                    pass
+
+    # Scan `data/vault/<Entity>/<Year>/<Bucket>/` for any orphaned files written to disk
+    # whose SQLite insert was interrupted (e.g. during a previous multi-screenshot upload)
+    known_names_by_bucket = {
+        (str(r.get("bucket", "")).lower(), str(r.get("name", "")).strip())
+        for r in loaded
+    }
+    for b_key in ("csv", "pdf", "screenshots", "other"):
+        b_dir = get_vault_dir(entity, tax_year, b_key)
+        if b_dir.exists() and b_dir.is_dir():
+            for disk_file in sorted(b_dir.iterdir()):
+                if not disk_file.is_file() or disk_file.name.startswith(".") or disk_file.name.lower().endswith(".ocr.md"):
+                    continue
+                if (b_key, disk_file.name) in known_names_by_bucket:
+                    continue
+                try:
+                    fbytes = disk_file.read_bytes()
+                    fsig = f"{disk_file.name}::{len(fbytes)}"
+                    try:
+                        rel_vpath = str(disk_file.relative_to(Path(__file__).resolve().parent))
+                    except ValueError:
+                        rel_vpath = str(disk_file)
+                    rec_df = pd.DataFrame(columns=STANDARD_COLUMNS)
+                    rec_note = ""
+                    rec_needs_ocr = False
+                    if b_key == "csv":
+                        raw_c = _read_bank_csv_bytes(fbytes)
+                        if not raw_c.empty:
+                            norm_c = normalize_financial_dataframe(raw_c)
+                            rec_df = apply_rule_categorization(norm_c, entity=entity)
+                    elif b_key == "pdf":
+                        raw_p = extract_pdf_tables(fbytes)
+                        if not raw_p.empty:
+                            norm_p = normalize_financial_dataframe(raw_p)
+                            rec_df = apply_rule_categorization(norm_p, entity=entity)
+                        else:
+                            rec_note = "Saved PDF to Vault. No structured table found automatically."
+                    elif b_key == "screenshots":
+                        rec_needs_ocr = True
+                        rec_note = "Saved in Vault — click '🔍 Run OCR on Screenshots' or open file to extract."
+                        rec_df = pd.DataFrame(
+                            [
+                                {
+                                    "Date": datetime.fromtimestamp(disk_file.stat().st_mtime).strftime("%Y-%m-%d"),
+                                    "Amount": 0.0,
+                                    "Description": disk_file.stem.replace("_", " ").replace("-", " "),
+                                    "Property": UNASSIGNED_PROPERTY,
+                                    "Account Code": "Uncategorized",
+                                }
+                            ]
+                        )[STANDARD_COLUMNS]
+                        rec_df = apply_rule_categorization(rec_df, entity=entity)
+                    else:
+                        raw_o = extract_other_document_tables(fbytes, disk_file.name)
+                        if not raw_o.empty:
+                            norm_o = normalize_financial_dataframe(raw_o)
+                            rec_df = apply_rule_categorization(norm_o, entity=entity)
+
+                    new_fid = f"file_{int(time.time() * 1000)}_{len(loaded) + 1}"
+                    mime_str = (
+                        "image/png"
+                        if disk_file.suffix.lower() == ".png"
+                        else ("image/jpeg" if b_key == "screenshots" else "")
+                    )
+                    recovered_rec: dict[str, object] = {
+                        "id": new_fid,
+                        "signature": fsig,
+                        "name": disk_file.name,
+                        "bucket": b_key,
+                        "vault_path": rel_vpath,
+                        "uploaded_at": datetime.fromtimestamp(disk_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        "df": rec_df,
+                        "raw_bytes": fbytes if b_key == "screenshots" else None,
+                        "mime_type": mime_str,
+                        "needs_ocr": rec_needs_ocr,
+                        "note": rec_note,
+                    }
+                    loaded.append(recovered_rec)
+                    _save_file_record_to_sqlite(entity, tax_year, recovered_rec)
+                    known_names_by_bucket.add((b_key, disk_file.name))
+                    repaired_or_recovered = True
+                except Exception:
+                    pass
+
+    if repaired_or_recovered:
+        frames = [
+            r["df"].reindex(columns=STANDARD_COLUMNS).copy()
+            for r in loaded
+            if isinstance(r.get("df"), pd.DataFrame) and not r["df"].empty
+        ]
+        if frames:
+            _save_master_ledger_to_sqlite(entity, tax_year, pd.concat(frames, ignore_index=True))
+
     return loaded
 
 
@@ -6813,19 +6948,118 @@ def parse_gemini_ocr_output(
     return categorized
 
 
-def extract_transactions_from_image_gemini(
+def get_screenshot_ocr_md_path(vault_path: str | Path) -> Path | None:
+    """Return the `.ocr.md` sidecar Path for a screenshot's vault path."""
+    raw = str(vault_path or "").strip()
+    if not raw:
+        return None
+    vp = Path(raw)
+    if not vp.is_absolute():
+        vp = Path(__file__).resolve().parent / vp
+    return Path(f"{vp}.ocr.md")
+
+
+def read_screenshot_ocr_markdown(file_rec: dict[str, object]) -> tuple[str, str]:
+    """Read the saved `.ocr.md` sidecar for a screenshot record if it exists."""
+    md_path = get_screenshot_ocr_md_path(str(file_rec.get("vault_path", "")))
+    if md_path is None or not md_path.exists() or not md_path.is_file():
+        return "", ""
+    try:
+        rel_path = str(md_path.relative_to(Path(__file__).resolve().parent))
+    except ValueError:
+        rel_path = str(md_path)
+    try:
+        return rel_path, md_path.read_text(encoding="utf-8")
+    except Exception:
+        return rel_path, ""
+
+
+def save_screenshot_ocr_markdown(
+    file_rec: dict[str, object],
+    entity: str,
+    tax_year: str,
+    ocr_meta: dict[str, object] | None = None,
+) -> str:
+    """
+    Save extracted screenshot OCR details + transactions to a human- and AI-readable
+    Markdown sidecar file (`<vault_path>.ocr.md`) alongside the original image in the Vault.
+    """
+    md_path = get_screenshot_ocr_md_path(str(file_rec.get("vault_path", "")))
+    if md_path is None:
+        return ""
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+
+    meta = ocr_meta or {}
+    fname = str(file_rec.get("name", "Screenshot"))
+    doc_type = str(meta.get("document_type") or "screenshot").strip()
+    title = str(meta.get("title") or fname).strip()
+    notes = str(meta.get("notes") or file_rec.get("note") or "").strip()
+    summary_fields = meta.get("summary_fields") if isinstance(meta.get("summary_fields"), dict) else {}
+    df = file_rec.get("df")
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame(columns=STANDARD_COLUMNS)
+
+    lines: list[str] = [
+        f"# OCR Extract: {fname}",
+        "",
+        f"- **Entity:** {entity}",
+        f"- **Tax Year:** {tax_year}",
+        f"- **Source Image:** `{fname}`",
+        f"- **OCR Model:** `{GEMINI_OCR_MODEL}`",
+        f"- **Document Type:** `{doc_type}`",
+        f"- **Title / Subject:** {title}",
+        f"- **Extracted At:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "## Summary & Extracted Details",
+        "",
+    ]
+
+    if summary_fields:
+        for k, v in summary_fields.items():
+            val_str = str(v).strip()
+            if val_str:
+                lines.append(f"- **{str(k).strip()}:** {val_str}")
+    else:
+        lines.append("- _No key-value summary fields detected._")
+
+    if notes:
+        lines.extend(["", f"**Notes:** {notes}"])
+
+    lines.extend(["", "## Extracted Transactions", ""])
+    if not df.empty:
+        lines.append("| Date | Amount | Description | Property | Account Code |")
+        lines.append("| --- | ---: | --- | --- | --- |")
+        for _, row in df.iterrows():
+            d_val = str(row.get("Date", "")).replace("|", "\\|").strip()
+            try:
+                amt_val = f"{float(row.get('Amount', 0.0) or 0.0):.2f}"
+            except (TypeError, ValueError):
+                amt_val = str(row.get("Amount", "0.00"))
+            desc_val = str(row.get("Description", "")).replace("|", "\\|").replace("\n", " ").strip()
+            prop_val = str(row.get("Property", UNASSIGNED_PROPERTY)).replace("|", "\\|").strip()
+            code_val = str(row.get("Account Code", "Uncategorized")).replace("|", "\\|").strip()
+            lines.append(f"| {d_val} | {amt_val} | {desc_val} | {prop_val} | {code_val} |")
+    else:
+        lines.append("_No individual transaction rows detected in this screenshot._")
+
+    lines.append("")
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+
+    try:
+        return str(md_path.relative_to(Path(__file__).resolve().parent))
+    except ValueError:
+        return str(md_path)
+
+
+def extract_screenshot_structured_gemini(
     image_bytes: bytes,
     mime_type: str = "image/png",
     api_key: str | None = None,
     run_dynamic_ai_fallback: bool = True,
-) -> tuple[pd.DataFrame, str]:
+) -> dict[str, object]:
     """
-    Use the new google-genai SDK (`from google import genai` and `client = genai.Client(api_key=...)`)
-    to pass the uploaded image to `gemini-3.8-flash` via `client.models.generate_content()`.
-    Prompt constraint: Instructs the model to perform highly precise OCR, extracting the financial
-    transactions found in the image and returning them strictly as a CSV text block with headers
-    `Date,Amount,Description`.
-    Parses the CSV output into a Pandas DataFrame and runs it through the Categorization Engine.
+    Use `gemini-3.8-flash` via `google-genai` to extract BOTH structured summary details
+    (for bank/loan summaries, receipts, balances) and any transaction rows from a screenshot.
     """
     resolved_key = (api_key or st.session_state.get("google_genai_api_key") or "").strip()
     if not resolved_key:
@@ -6834,11 +7068,16 @@ def extract_transactions_from_image_gemini(
     client = genai.Client(api_key=resolved_key)
 
     ocr_prompt = (
-        "Perform highly precise OCR on this image. Extract all financial transactions found in the image "
-        "and return them strictly as a CSV text block with headers Date,Amount,Description. "
-        "Format Amount as a plain decimal number without commas or currency symbols (negative for debits/expenses, "
-        "positive for credits/income). Quote any Description containing commas. "
-        "Return ONLY the raw CSV text block starting with Date,Amount,Description and no other commentary."
+        "Perform highly precise OCR on this financial/banking/receipt image. "
+        "Return ONLY a single valid JSON object (no markdown fences) with these keys:\n"
+        '- "document_type": one of "transactions", "account_summary", "loan_summary", "receipt", "other"\n'
+        '- "title": short title (e.g. bank & account name or merchant name)\n'
+        '- "summary_fields": object of key-value pairs for every important figure or label visible '
+        '(e.g. Bank, Account Name, Account Number, Balance, Limit, Interest Rate, Maturity Date, Total, Tax/GST, Date)\n'
+        '- "notes": 1-2 sentence concise summary of what the screenshot shows\n'
+        '- "transactions": array of objects, each with {"Date": "YYYY-MM-DD", "Amount": number, "Description": string}. '
+        "Format Amount as a plain number (negative for debits/expenses, positive for credits/income). "
+        "If the image is purely an account/loan balance summary with no transaction list, return an empty array []."
     )
 
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
@@ -6849,8 +7088,68 @@ def extract_transactions_from_image_gemini(
     )
 
     raw_output = response.text or ""
-    df = parse_gemini_ocr_output(raw_output, run_dynamic_ai_fallback=run_dynamic_ai_fallback)
-    return df, raw_output
+    cleaned = raw_output.strip()
+    fence_match = re.search(r"```(?:json|csv|text)?\s*(.*?)```", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+
+    doc_type = "screenshot"
+    title = ""
+    summary_fields: dict[str, object] = {}
+    notes = ""
+    df = pd.DataFrame(columns=STANDARD_COLUMNS)
+
+    parsed_json = None
+    try:
+        parsed_json = json.loads(cleaned)
+    except Exception:
+        parsed_json = None
+
+    if isinstance(parsed_json, dict):
+        doc_type = str(parsed_json.get("document_type") or "screenshot").strip()
+        title = str(parsed_json.get("title") or "").strip()
+        if isinstance(parsed_json.get("summary_fields"), dict):
+            summary_fields = parsed_json["summary_fields"]
+        notes = str(parsed_json.get("notes") or "").strip()
+        txs = parsed_json.get("transactions")
+        if isinstance(txs, list) and txs:
+            raw_df = pd.DataFrame(txs)
+            df = standardize_ledger_dataframe(raw_df)
+            df = apply_rule_categorization(df)
+            if run_dynamic_ai_fallback and not df.empty and df["Account Code"].apply(is_uncategorized).any():
+                try:
+                    df, _ = apply_ai_fallback_categorization(df)
+                except Exception:
+                    pass
+    else:
+        df = parse_gemini_ocr_output(raw_output, run_dynamic_ai_fallback=run_dynamic_ai_fallback)
+
+    return {
+        "df": df,
+        "document_type": doc_type,
+        "title": title,
+        "summary_fields": summary_fields,
+        "notes": notes,
+        "raw_output": raw_output,
+    }
+
+
+def extract_transactions_from_image_gemini(
+    image_bytes: bytes,
+    mime_type: str = "image/png",
+    api_key: str | None = None,
+    run_dynamic_ai_fallback: bool = True,
+) -> tuple[pd.DataFrame, str]:
+    """
+    Use `gemini-3.8-flash` to OCR a screenshot and return `(DataFrame, raw_output)`.
+    """
+    res = extract_screenshot_structured_gemini(
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        api_key=api_key,
+        run_dynamic_ai_fallback=run_dynamic_ai_fallback,
+    )
+    return res["df"], str(res.get("raw_output", ""))
 
 
 def extract_pdf_tables(pdf_bytes: bytes) -> pd.DataFrame:
@@ -7539,6 +7838,90 @@ def extract_other_document_tables(file_bytes: bytes, filename: str) -> pd.DataFr
         return pd.read_csv(io.BytesIO(file_bytes))
 
 
+def _read_bank_csv_bytes(file_bytes: bytes) -> pd.DataFrame:
+    """
+    Robustly parse bank CSV bytes, including NZ/US bank exports (such as ASB CSVs)
+    that prepend 1-column metadata preamble lines above the true multi-column table header.
+    """
+    import csv as _csv
+
+    text = ""
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            text = file_bytes.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if not text:
+        text = file_bytes.decode("utf-8", errors="replace")
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return pd.DataFrame()
+
+    header_keywords = {
+        "date",
+        "amount",
+        "debit",
+        "credit",
+        "payee",
+        "description",
+        "memo",
+        "particulars",
+        "tran type",
+        "details",
+        "reference",
+        "other party",
+        "unique id",
+    }
+
+    best_header_idx = 0
+    for idx, line in enumerate(lines[:30]):
+        try:
+            parsed_row = next(_csv.reader([line]))
+        except Exception:
+            continue
+        cleaned_cells = [str(c).strip().lower() for c in parsed_row if str(c).strip()]
+        if len(cleaned_cells) >= 3:
+            hits = sum(1 for c in cleaned_cells if c in header_keywords or any(k in c for k in ("date", "amount", "debit", "credit")))
+            if hits >= 2:
+                best_header_idx = idx
+                break
+
+    sliced_text = "\n".join(lines[best_header_idx:])
+    try:
+        df = pd.read_csv(io.StringIO(sliced_text))
+        if len(df.columns) >= 2:
+            return df
+    except Exception:
+        pass
+
+    try:
+        df = pd.read_csv(io.BytesIO(file_bytes))
+        if len(df.columns) >= 2:
+            return df
+    except Exception:
+        pass
+
+    # Fallback: jagged row reader via csv.reader padded to max width
+    all_rows: list[list[str]] = []
+    for line in lines[best_header_idx:]:
+        try:
+            row = next(_csv.reader([line]))
+            if any(str(cell).strip() for cell in row):
+                all_rows.append([str(cell).strip() for cell in row])
+        except Exception:
+            continue
+    if not all_rows:
+        return pd.DataFrame()
+    max_cols = max(len(r) for r in all_rows)
+    padded_rows = [r + [""] * (max_cols - len(r)) for r in all_rows]
+    if len(padded_rows) >= 2:
+        cols = _dedupe_column_names(padded_rows[0])
+        return pd.DataFrame(padded_rows[1:], columns=cols)
+    return pd.DataFrame(padded_rows)
+
+
 def classify_upload_bucket(filename: str) -> str:
     """
     Classify any uploaded filename into one of the 4 columns:
@@ -7555,6 +7938,127 @@ def classify_upload_bucket(filename: str) -> str:
     if ext in (".png", ".jpg", ".jpeg", ".webp"):
         return "screenshots"
     return "other"
+
+
+def _reconcile_vault_and_broken_csvs(
+    entity: str,
+    tax_year: str,
+    records: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """
+    1. Automatically repair any previously uploaded CSV record that had 0 rows due to bank metadata preamble lines.
+    2. Automatically recover any orphaned files present in `data/vault/<Entity>/<Year>/<Bucket>/` on disk
+       that were interrupted before being registered in SQLite `uploaded_files`.
+    """
+    changed = False
+    existing_names = {str(r.get("name", "")).strip() for r in records}
+
+    # 1. Repair 0-row CSVs that have a valid vault file on disk
+    for rec in records:
+        if str(rec.get("bucket", "")) == "csv":
+            df_cur = rec.get("df")
+            if not isinstance(df_cur, pd.DataFrame) or df_cur.empty:
+                vpath = str(rec.get("vault_path", "") or "")
+                vp = Path(vpath) if vpath else None
+                if vp and not vp.is_absolute():
+                    vp = Path(__file__).resolve().parent / vp
+                if vp and vp.exists() and vp.is_file():
+                    try:
+                        raw_df = _read_bank_csv_bytes(vp.read_bytes())
+                        if not raw_df.empty:
+                            norm_df = (
+                                raw_df.copy()
+                                if list(raw_df.columns) == STANDARD_COLUMNS
+                                else normalize_financial_dataframe(raw_df)
+                            )
+                            if not norm_df.empty:
+                                cat_df = apply_rule_categorization(norm_df, entity=entity)
+                                rec["df"] = cat_df
+                                rec["note"] = ""
+                                _save_file_record_to_sqlite(entity, tax_year, rec)
+                                changed = True
+                    except Exception:
+                        pass
+
+    # 2. Recover orphaned files in data/vault/<Entity>/<Year>/<Bucket>/
+    for b_key in ("csv", "pdf", "screenshots", "other"):
+        b_dir = get_vault_dir(entity, tax_year, b_key)
+        if not b_dir.exists():
+            continue
+        for fpath in sorted(b_dir.iterdir()):
+            if not fpath.is_file() or fpath.name.startswith(".") or fpath.name.lower().endswith(".ocr.md"):
+                continue
+            if fpath.name in existing_names:
+                continue
+            try:
+                fbytes = fpath.read_bytes()
+                fname = fpath.name
+                raw_df = pd.DataFrame()
+                parse_note = ""
+                needs_ocr = False
+                if b_key == "csv":
+                    raw_df = _read_bank_csv_bytes(fbytes)
+                elif b_key == "pdf":
+                    raw_df = extract_pdf_tables(fbytes)
+                elif b_key == "screenshots":
+                    needs_ocr = True
+                    parse_note = "Recovered from Vault — click '🔍 Run AI OCR' or open file."
+                else:
+                    raw_df = extract_other_document_tables(fbytes, fname)
+
+                if not raw_df.empty:
+                    norm_df = (
+                        raw_df.copy()
+                        if list(raw_df.columns) == STANDARD_COLUMNS
+                        else normalize_financial_dataframe(raw_df)
+                    )
+                    cat_df = apply_rule_categorization(norm_df, entity=entity)
+                elif b_key == "screenshots":
+                    placeholder = pd.DataFrame(
+                        [
+                            {
+                                "Date": pd.Timestamp.today().strftime("%Y-%m-%d"),
+                                "Amount": 0.0,
+                                "Description": f"Screenshot Receipt ({fname}) — Enter details or run OCR",
+                                "Property": UNASSIGNED_PROPERTY,
+                                "Account Code": "Uncategorized",
+                            }
+                        ]
+                    )[STANDARD_COLUMNS]
+                    cat_df = apply_rule_categorization(placeholder, entity=entity)
+                else:
+                    cat_df = pd.DataFrame(columns=STANDARD_COLUMNS)
+
+                new_rec: dict[str, object] = {
+                    "id": f"file_{len(records) + 1}_{abs(hash(f'{fname}::{len(fbytes)}')) % 100000}",
+                    "signature": f"{fname}::{len(fbytes)}",
+                    "name": fname,
+                    "bucket": b_key,
+                    "uploaded_at": pd.Timestamp.now().strftime("%H:%M:%S"),
+                    "vault_path": str(fpath),
+                    "df": cat_df,
+                    "raw_bytes": fbytes if b_key == "screenshots" else None,
+                    "mime_type": "image/png" if fname.lower().endswith(".png") else ("image/jpeg" if b_key == "screenshots" else ""),
+                    "needs_ocr": needs_ocr,
+                    "note": parse_note,
+                }
+                _save_file_record_to_sqlite(entity, tax_year, new_rec, sort_order=len(records))
+                records.append(new_rec)
+                existing_names.add(fname)
+                changed = True
+            except Exception:
+                continue
+
+    if changed:
+        frames = [
+            r["df"].reindex(columns=STANDARD_COLUMNS).copy()
+            for r in records
+            if isinstance(r.get("df"), pd.DataFrame) and not r["df"].empty
+        ]
+        combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=STANDARD_COLUMNS)
+        _db_save_master_ledger(entity, tax_year, combined)
+
+    return records
 
 
 def get_entity_uploaded_files(
@@ -7576,12 +8080,13 @@ def get_entity_uploaded_files(
 
     if load_key not in st.session_state["_sqlite_loaded_files"]:
         db_files = _load_uploaded_files_from_sqlite(target_entity, target_year)
+        db_files = _reconcile_vault_and_broken_csvs(target_entity, target_year, db_files)
         st.session_state["entity_uploaded_files"][target_entity][target_year] = db_files
         st.session_state["_sqlite_loaded_files"].add(load_key)
     elif target_year not in st.session_state["entity_uploaded_files"][target_entity]:
-        st.session_state["entity_uploaded_files"][target_entity][target_year] = _load_uploaded_files_from_sqlite(
-            target_entity, target_year
-        )
+        db_files = _load_uploaded_files_from_sqlite(target_entity, target_year)
+        db_files = _reconcile_vault_and_broken_csvs(target_entity, target_year, db_files)
+        st.session_state["entity_uploaded_files"][target_entity][target_year] = db_files
     return st.session_state["entity_uploaded_files"][target_entity][target_year]
 
 
@@ -7609,11 +8114,91 @@ def sync_entity_ledger_from_files(
     return set_entity_ledger(empty_df, target_entity, target_year)
 
 
+def run_ocr_on_screenshot_record(
+    file_rec: dict[str, object],
+    entity: str | None = None,
+    tax_year: str | None = None,
+) -> tuple[bool, str, int]:
+    """
+    Run Gemini Vision OCR on an existing screenshot record in `files_list`,
+    update its DataFrame in memory + SQLite, and sync the entity master ledger.
+    Returns `(ok, message, extracted_row_count)`.
+    """
+    target_entity = get_active_entity(entity)
+    target_year = get_active_tax_year(tax_year)
+    fname = str(file_rec.get("name", "Screenshot.png"))
+    api_key = st.session_state.get("google_genai_api_key", "").strip()
+    if not api_key:
+        return False, "No Gemini API Key configured in sidebar settings.", 0
+
+    raw_bytes = file_rec.get("raw_bytes")
+    if not isinstance(raw_bytes, (bytes, bytearray)):
+        vpath = str(file_rec.get("vault_path", "") or "")
+        if vpath:
+            vp = Path(vpath)
+            if not vp.is_absolute():
+                vp = Path(__file__).resolve().parent / vp
+            if vp.exists() and vp.is_file():
+                raw_bytes = vp.read_bytes()
+                file_rec["raw_bytes"] = raw_bytes
+    if not isinstance(raw_bytes, (bytes, bytearray)):
+        return False, f"Could not load image bytes for '{fname}'.", 0
+
+    mime_type = str(file_rec.get("mime_type") or "") or (
+        "image/png" if fname.lower().endswith(".png") else "image/jpeg"
+    )
+    try:
+        ocr_res = extract_screenshot_structured_gemini(
+            image_bytes=bytes(raw_bytes),
+            mime_type=mime_type,
+            api_key=api_key,
+            run_dynamic_ai_fallback=True,
+        )
+        ocr_df = ocr_res.get("df")
+        if not isinstance(ocr_df, pd.DataFrame):
+            ocr_df = pd.DataFrame(columns=STANDARD_COLUMNS)
+
+        if not ocr_df.empty:
+            norm_df = (
+                ocr_df.copy()
+                if list(ocr_df.columns) == STANDARD_COLUMNS
+                else normalize_financial_dataframe(ocr_df)
+            )
+            cat_df = apply_rule_categorization(norm_df, entity=target_entity)
+            file_rec["df"] = cat_df
+            file_rec["needs_ocr"] = False
+            md_path = save_screenshot_ocr_markdown(file_rec, target_entity, target_year, ocr_meta=ocr_res)
+            file_rec["ocr_md_path"] = md_path
+            file_rec["note"] = f"OCR complete ({len(cat_df)} rows) · Saved .ocr.md"
+            _save_file_record_to_sqlite(target_entity, target_year, file_rec)
+            sync_entity_ledger_from_files(target_entity, target_year)
+            return True, f"Extracted {len(cat_df)} transaction(s) from '{fname}' and saved .ocr.md.", len(cat_df)
+        else:
+            file_rec["needs_ocr"] = False
+            summary_note = str(ocr_res.get("notes") or "").strip()
+            file_rec["note"] = (
+                f"{summary_note} · Saved .ocr.md"
+                if summary_note
+                else "Account/Loan summary screenshot · Saved .ocr.md"
+            )
+            md_path = save_screenshot_ocr_markdown(file_rec, target_entity, target_year, ocr_meta=ocr_res)
+            file_rec["ocr_md_path"] = md_path
+            _save_file_record_to_sqlite(target_entity, target_year, file_rec)
+            sync_entity_ledger_from_files(target_entity, target_year)
+            return True, f"Scanned '{fname}' and saved .ocr.md summary.", 0
+    except Exception as exc:
+        file_rec["needs_ocr"] = True
+        file_rec["note"] = f"OCR error: {str(exc)[:80]}"
+        _save_file_record_to_sqlite(target_entity, target_year, file_rec)
+        return False, f"OCR failed on '{fname}': {exc}", 0
+
+
 def ingest_uploaded_file_object(
     uploaded_file,
     entity: str | None = None,
     tax_year: str | None = None,
     forced_bucket: str | None = None,
+    run_ocr_immediately: bool = True,
 ) -> tuple[bool, str, dict[str, object] | None]:
     """
     Parse an uploaded file (CSV, PDF, Screenshot, or Other [Excel/ODS/ODT]),
@@ -7631,7 +8216,20 @@ def ingest_uploaded_file_object(
     # Check if already ingested with identical name + byte size in SQLite / session
     file_sig = f"{fname}::{len(fbytes)}"
     for existing in files_list:
-        if existing.get("signature") == file_sig:
+        if existing.get("signature") == file_sig or str(existing.get("name", "")).strip() == fname:
+            existing_df = existing.get("df")
+            # If previously failed CSV parse (0 rows), allow re-parsing now
+            if (
+                bucket == "csv"
+                and (not isinstance(existing_df, pd.DataFrame) or existing_df.empty)
+                and "parse warning" in str(existing.get("note", "")).lower()
+            ):
+                files_list.remove(existing)
+                _delete_file_record_from_sqlite(str(existing.get("id", "")), delete_vault_file=False)
+                break
+            if bucket == "screenshots" and run_ocr_immediately and existing.get("needs_ocr"):
+                run_ocr_on_screenshot_record(existing, entity=target_entity, tax_year=target_year)
+                return True, f"Updated OCR for '{fname}'.", existing
             return True, f"'{fname}' is already saved in the {bucket.upper()} vault.", existing
 
     # Save raw file bytes to organized local File Vault on disk (`data/vault/<Company>/<Year>/<Bucket>/<Filename>`)
@@ -7640,10 +8238,11 @@ def ingest_uploaded_file_object(
     raw_df = pd.DataFrame()
     parse_note = ""
     needs_ocr = False
+    ocr_meta: dict[str, object] | None = None
 
     try:
         if bucket == "csv":
-            raw_df = pd.read_csv(io.BytesIO(fbytes))
+            raw_df = _read_bank_csv_bytes(fbytes)
         elif bucket == "pdf":
             raw_df = extract_pdf_tables(fbytes)
             if raw_df.empty:
@@ -7653,21 +8252,35 @@ def ingest_uploaded_file_object(
             mime_type = getattr(uploaded_file, "type", None) or (
                 "image/png" if fname.lower().endswith(".png") else "image/jpeg"
             )
-            if has_api_key:
+            if run_ocr_immediately and has_api_key:
                 try:
-                    ocr_df, _ = extract_transactions_from_image_gemini(
+                    ocr_meta = extract_screenshot_structured_gemini(
                         image_bytes=fbytes,
                         mime_type=mime_type,
                         api_key=st.session_state.get("google_genai_api_key", ""),
                         run_dynamic_ai_fallback=True,
                     )
-                    raw_df = ocr_df
+                    maybe_df = ocr_meta.get("df")
+                    raw_df = maybe_df if isinstance(maybe_df, pd.DataFrame) else pd.DataFrame()
+                    if raw_df.empty:
+                        summary_note = str(ocr_meta.get("notes") or "").strip()
+                        parse_note = (
+                            f"{summary_note} · Saved .ocr.md"
+                            if summary_note
+                            else "Account/Loan summary screenshot · Saved .ocr.md"
+                        )
+                    else:
+                        parse_note = f"Auto-OCR ({GEMINI_OCR_MODEL}) · Saved .ocr.md"
                 except Exception as ocr_exc:
                     needs_ocr = True
-                    parse_note = f"OCR pending ({str(ocr_exc)[:60]}). Open file to retry or enter row manually."
+                    parse_note = f"OCR pending ({str(ocr_exc)[:60]}). Click '🔍 Run OCR' or open file."
             else:
                 needs_ocr = True
-                parse_note = "Saved to Vault — click to open screenshot, run OCR, or code receipt row."
+                parse_note = (
+                    "Saved to Vault — click '🔍 Run OCR on Screenshots' above or open file to extract rows."
+                    if has_api_key
+                    else "Saved to Vault — open file to run OCR or code receipt row."
+                )
         else:
             raw_df = extract_other_document_tables(fbytes, fname)
     except Exception as exc:
@@ -7712,6 +8325,9 @@ def ingest_uploaded_file_object(
         "needs_ocr": needs_ocr,
         "note": parse_note,
     }
+    if bucket == "screenshots" and ocr_meta is not None:
+        md_path = save_screenshot_ocr_markdown(record, target_entity, target_year, ocr_meta=ocr_meta)
+        record["ocr_md_path"] = md_path
     files_list.append(record)
     _save_file_record_to_sqlite(target_entity, target_year, record)
     sync_entity_ledger_from_files(target_entity, target_year)
@@ -7913,38 +8529,49 @@ def _render_full_page_file_reviewer(
 
     st.markdown('<div class="axiom-divider" style="margin: 0.65rem 0;"></div>', unsafe_allow_html=True)
 
-    # If this is a Screenshot, show image preview & OCR button right at top
+    # If this is a Screenshot, show image preview, OCR button & saved .ocr.md sidecar right at top
     if file_rec.get("bucket") == "screenshots" and file_rec.get("raw_bytes"):
         img_col, ocr_col = st.columns([1.2, 2.8])
         with img_col:
             st.image(file_rec["raw_bytes"], caption=file_name, use_container_width=True)
         with ocr_col:
             has_key = bool(st.session_state.get("google_genai_api_key", "").strip())
-            st.markdown('<div class="axiom-eyebrow">SCREENSHOT OCR EXTRACTION</div>', unsafe_allow_html=True)
+            st.markdown('<div class="axiom-eyebrow">SCREENSHOT OCR EXTRACTION (GEMINI 3.8 FLASH)</div>', unsafe_allow_html=True)
             if file_rec.get("note"):
                 st.caption(str(file_rec.get("note")))
-            if st.button(
-                f"Run Gemini OCR on {file_name}",
-                key=f"{key_prefix}_run_shot_ocr_{file_id}",
-                disabled=not has_key,
-            ):
-                try:
-                    with st.spinner("Extracting transactions from screenshot..."):
-                        ocr_df, _ = extract_transactions_from_image_gemini(
-                            image_bytes=file_rec["raw_bytes"],
-                            mime_type=str(file_rec.get("mime_type") or "image/png"),
-                            api_key=st.session_state.get("google_genai_api_key", ""),
-                            run_dynamic_ai_fallback=True,
+            md_rel_path, md_content = read_screenshot_ocr_markdown(file_rec)
+            oc_b1, oc_b2 = st.columns([1.6, 1.2])
+            with oc_b1:
+                if st.button(
+                    f"🔍 {'Re-Run' if md_content else 'Run'} Gemini 3.8 Flash OCR",
+                    key=f"{key_prefix}_run_shot_ocr_{file_id}",
+                    disabled=not has_key,
+                    use_container_width=True,
+                ):
+                    with st.spinner("Running Gemini 3.8 Flash OCR and saving .ocr.md..."):
+                        ok_ocr, msg_ocr, _ = run_ocr_on_screenshot_record(
+                            file_rec,
+                            entity=active_entity,
+                            tax_year=active_tax_year,
                         )
-                    if not ocr_df.empty:
-                        file_rec["df"] = apply_rule_categorization(ocr_df, entity=active_entity)
-                        file_rec["needs_ocr"] = False
-                        file_rec["note"] = ""
-                        sync_entity_ledger_from_files(active_entity, active_tax_year)
-                        st.success(f"Extracted {len(ocr_df)} transaction(s) from screenshot.")
+                    if ok_ocr:
+                        st.success(msg_ocr)
                         st.rerun()
-                except Exception as exc:
-                    st.error(f"OCR Error: {exc}")
+                    else:
+                        st.error(msg_ocr)
+            with oc_b2:
+                if md_content:
+                    st.download_button(
+                        label="⬇ Download .ocr.md",
+                        data=md_content.encode("utf-8"),
+                        file_name=f"{file_name}.ocr.md",
+                        mime="text/markdown",
+                        key=f"{key_prefix}_dl_ocr_md_{file_id}",
+                        use_container_width=True,
+                    )
+            if md_content:
+                with st.expander(f"📝 Saved OCR Markdown ({md_rel_path or f'{file_name}.ocr.md'})", expanded=False):
+                    st.markdown(md_content)
 
     counts = get_file_red_counts(df, entity=active_entity)
     mc1, mc2, mc3, mc4 = st.columns(4)
@@ -8299,28 +8926,70 @@ def _render_bulk_upload_dropzone(
             )
             st.markdown('<div class="axiom-divider" style="margin: 0.65rem 0;"></div>', unsafe_allow_html=True)
 
+        master_nonce_key = f"_{key_prefix}_master_up_nonce_{active_entity}_{active_tax_year}"
+        master_nonce = int(st.session_state.get(master_nonce_key, 0))
+        last_master_msg_key = f"_{key_prefix}_master_up_msg_{active_entity}_{active_tax_year}"
+        if st.session_state.get(last_master_msg_key):
+            st.success(str(st.session_state.pop(last_master_msg_key)))
+
         uploaded_batch = st.file_uploader(
             "Select or drag-and-drop all your files here (CSV, PDF, PNG/JPG Screenshots, Excel .xlsx/.xls, OpenDocument .ods/.odt)",
             type=["csv", "pdf", "png", "jpg", "jpeg", "webp", "xlsx", "xls", "ods", "odt", "tsv"],
             accept_multiple_files=True,
-            key=f"{key_prefix}_master_multi_uploader_{active_entity}_{active_tax_year}",
+            key=f"{key_prefix}_master_multi_uploader_{active_entity}_{active_tax_year}_{master_nonce}",
         )
 
         if uploaded_batch:
-            newly_added = 0
-            for up_file in uploaded_batch:
-                f_sig = f"{up_file.name}::{len(up_file.getvalue())}"
-                already_exists = any(f.get("signature") == f_sig for f in files_list)
-                if not already_exists:
+            has_shots = any(classify_upload_bucket(getattr(uf, "name", "")) == "screenshots" for uf in uploaded_batch)
+            has_gemini = bool(st.session_state.get("google_genai_api_key", "").strip())
+            ub_c1, ub_c2, ub_c3 = st.columns([2.0, 2.0, 1.0] if (has_shots and has_gemini) else [3.0, 0.01, 1.0])
+            with ub_c1:
+                do_fast_upload = st.button(
+                    f"⬆️ Upload & Sort {len(uploaded_batch)} Selected File(s) Now",
+                    key=f"{key_prefix}_btn_master_upload_{active_entity}_{active_tax_year}_{master_nonce}",
+                    type="primary",
+                    use_container_width=True,
+                )
+            with ub_c2:
+                do_ocr_upload = False
+                if has_shots and has_gemini:
+                    do_ocr_upload = st.button(
+                        f"🔍 Upload & Run AI OCR on Screenshots ({len(uploaded_batch)} file(s))",
+                        key=f"{key_prefix}_btn_master_upload_ocr_{active_entity}_{active_tax_year}_{master_nonce}",
+                        type="secondary",
+                        use_container_width=True,
+                    )
+            with ub_c3:
+                if st.button(
+                    "✕ Clear Queue",
+                    key=f"{key_prefix}_btn_master_clear_{active_entity}_{active_tax_year}_{master_nonce}",
+                    use_container_width=True,
+                ):
+                    st.session_state[master_nonce_key] = master_nonce + 1
+                    st.rerun()
+
+            if do_fast_upload or do_ocr_upload:
+                prog = st.progress(0.0, text="Uploading files to Vault & SQLite...")
+                newly_added = 0
+                total_u = len(uploaded_batch)
+                for idx_u, up_file in enumerate(uploaded_batch, start=1):
+                    prog.progress(
+                        idx_u / total_u,
+                        text=f"Processing ({idx_u}/{total_u}): {up_file.name}...",
+                    )
                     ok, _, _ = ingest_uploaded_file_object(
                         up_file,
                         entity=active_entity,
                         tax_year=active_tax_year,
+                        run_ocr_immediately=True,
                     )
                     if ok:
                         newly_added += 1
-            if newly_added > 0:
-                st.toast(f"Automatically sorted {newly_added} file(s) into columns.")
+                prog.empty()
+                st.session_state[master_nonce_key] = master_nonce + 1
+                st.session_state[last_master_msg_key] = (
+                    f"✅ Uploaded & sorted {newly_added} file(s) into the 4 columns below."
+                )
                 st.rerun()
 
 
@@ -8396,33 +9065,97 @@ def render_entity_ingestion_pipeline(
             st.markdown(
                 """
                 <div style="border-bottom: 1px solid #2A2D34; padding-bottom: 0.5rem; margin-bottom: 0.65rem;">
-                    <div class="axiom-eyebrow" style="margin-bottom: 0.1rem;">＋ UPLOAD MULTIPLE FILES</div>
-                    <div style="font-size: 0.82rem; color: #A0A5B1;">Drop CSV, PDF, PNG/JPG Screenshots, Excel &amp; OpenDocument files &mdash; auto-sorted into the 4 columns below</div>
+                    <div class="axiom-eyebrow" style="margin-bottom: 0.1rem;">＋ UPLOAD MULTIPLE FILES (ADD AS MANY BATCHES AS YOU NEED)</div>
+                    <div style="font-size: 0.82rem; color: #A0A5B1;">1) Select or drag-and-drop CSV, PDF, PNG/JPG Screenshots, Excel &amp; ODT files &rarr; 2) Click <b>⬆️ Upload &amp; Sort Selected Files</b> below</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+            quick_nonce_key = f"_{key_prefix}_quick_up_nonce_{active_entity}_{active_tax_year}"
+            quick_nonce = int(st.session_state.get(quick_nonce_key, 0))
+            last_quick_msg_key = f"_{key_prefix}_quick_up_msg_{active_entity}_{active_tax_year}"
+            if st.session_state.get(last_quick_msg_key):
+                st.success(str(st.session_state.pop(last_quick_msg_key)))
+
             quick_batch = st.file_uploader(
                 "Drop CSV, PDF, PNG/JPG Screenshots, Excel/ODT files",
                 type=["csv", "pdf", "png", "jpg", "jpeg", "webp", "xlsx", "xls", "ods", "odt", "tsv"],
                 accept_multiple_files=True,
-                key=f"{key_prefix}_quick_multi_up_{active_entity}_{active_tax_year}",
+                key=f"{key_prefix}_quick_multi_up_{active_entity}_{active_tax_year}_{quick_nonce}",
                 label_visibility="collapsed",
             )
             if quick_batch:
-                newly_added_q = 0
-                for up_file in quick_batch:
-                    f_sig = f"{up_file.name}::{len(up_file.getvalue())}"
-                    if not any(f.get("signature") == f_sig for f in files_list):
+                q_shots = [uf for uf in quick_batch if classify_upload_bucket(getattr(uf, "name", "")) == "screenshots"]
+                has_gemini_q = bool(st.session_state.get("google_genai_api_key", "").strip())
+                st.markdown(
+                    f"""
+                    <div style="
+                        background-color: #1A2332;
+                        border: 1px solid #3B82F6;
+                        border-radius: 4px;
+                        padding: 0.5rem 0.75rem;
+                        margin-top: 0.35rem;
+                        margin-bottom: 0.5rem;
+                        font-size: 0.83rem;
+                        color: #E5E7EB;
+                    ">
+                        📂 <b>{len(quick_batch)} file(s) staged for upload</b> — click <b>⬆️ Upload &amp; Sort Selected Files</b> below to save them into the 4 columns (you can keep clicking <i>Browse files</i> to add more before uploading).
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if q_shots and has_gemini_q:
+                    qb_c1, qb_c2, qb_c3 = st.columns([2.1, 2.1, 0.9])
+                else:
+                    qb_c1, qb_c2, qb_c3 = st.columns([3.2, 0.01, 0.9])
+                with qb_c1:
+                    click_quick_upload = st.button(
+                        f"⬆️ Upload & Sort {len(quick_batch)} Selected File(s) Now",
+                        key=f"{key_prefix}_btn_quick_upload_{active_entity}_{active_tax_year}_{quick_nonce}",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                with qb_c2:
+                    click_quick_ocr = False
+                    if q_shots and has_gemini_q:
+                        click_quick_ocr = st.button(
+                            f"🔍 Upload & Run AI OCR on {len(q_shots)} Screenshot(s)",
+                            key=f"{key_prefix}_btn_quick_upload_ocr_{active_entity}_{active_tax_year}_{quick_nonce}",
+                            type="secondary",
+                            use_container_width=True,
+                        )
+                with qb_c3:
+                    if st.button(
+                        "✕ Clear",
+                        key=f"{key_prefix}_btn_quick_clear_{active_entity}_{active_tax_year}_{quick_nonce}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[quick_nonce_key] = quick_nonce + 1
+                        st.rerun()
+
+                if click_quick_upload or click_quick_ocr:
+                    q_prog = st.progress(0.0, text="Saving uploaded files to Vault & SQLite...")
+                    newly_added_q = 0
+                    tot_q = len(quick_batch)
+                    for idx_q, up_file in enumerate(quick_batch, start=1):
+                        q_prog.progress(
+                            idx_q / tot_q,
+                            text=f"Uploading ({idx_q}/{tot_q}): {up_file.name}...",
+                        )
                         ok, _, _ = ingest_uploaded_file_object(
                             up_file,
                             entity=active_entity,
                             tax_year=active_tax_year,
+                            run_ocr_immediately=True,
                         )
                         if ok:
                             newly_added_q += 1
-                if newly_added_q > 0:
-                    st.toast(f"Automatically sorted {newly_added_q} file(s) into columns.")
+                    q_prog.empty()
+                    st.session_state[quick_nonce_key] = quick_nonce + 1
+                    st.session_state[last_quick_msg_key] = (
+                        f"✅ Uploaded & sorted {newly_added_q} file(s) into the 4 columns below! Ready to add more files anytime."
+                    )
+                    st.toast(f"Uploaded & sorted {newly_added_q} file(s) into columns.")
                     st.rerun()
 
         if st.session_state.get(f"_{key_prefix}_show_item_prop_setup_{active_entity}", False):
@@ -8484,6 +9217,51 @@ def render_entity_ingestion_pipeline(
                         unsafe_allow_html=True,
                     )
 
+                    # Batch OCR action bar specifically for 03 // SCREENSHOTS
+                    if bucket_key == "screenshots" and bucket_files:
+                        pending_ocr_files = [
+                            f for f in bucket_files
+                            if f.get("needs_ocr")
+                            or (
+                                isinstance(f.get("df"), pd.DataFrame)
+                                and len(f["df"]) == 1
+                                and float(f["df"]["Amount"].iloc[0] or 0.0) == 0.0
+                                and not str(f.get("note", "")).startswith("Account/Loan summary")
+                            )
+                        ]
+                        has_gem_col = bool(st.session_state.get("google_genai_api_key", "").strip())
+                        ocr_btn_label = (
+                            f"🔍 Run AI OCR on Pending ({len(pending_ocr_files)})"
+                            if pending_ocr_files
+                            else f"🔄 Re-Run AI OCR on All ({len(bucket_files)})"
+                        )
+                        if st.button(
+                            ocr_btn_label,
+                            key=f"{key_prefix}_batch_shot_ocr_{active_entity}_{active_tax_year}",
+                            type="primary" if pending_ocr_files else "secondary",
+                            disabled=not has_gem_col,
+                            use_container_width=True,
+                            help="Extract transaction rows from uploaded PNG/JPG screenshots using Gemini Vision OCR.",
+                        ):
+                            targets_to_ocr = pending_ocr_files if pending_ocr_files else bucket_files
+                            shot_prog = st.progress(0.0, text="Starting Gemini OCR on screenshots...")
+                            extracted_files_cnt = 0
+                            for s_idx, s_rec in enumerate(targets_to_ocr, start=1):
+                                shot_prog.progress(
+                                    s_idx / len(targets_to_ocr),
+                                    text=f"OCR ({s_idx}/{len(targets_to_ocr)}): {s_rec.get('name')}...",
+                                )
+                                ok_s, _, _ = run_ocr_on_screenshot_record(
+                                    s_rec,
+                                    entity=active_entity,
+                                    tax_year=active_tax_year,
+                                )
+                                if ok_s:
+                                    extracted_files_cnt += 1
+                            shot_prog.empty()
+                            st.toast(f"Completed OCR on {extracted_files_cnt} screenshot(s).")
+                            st.rerun()
+
                     if not bucket_files:
                         st.markdown(
                             """
@@ -8512,7 +9290,20 @@ def render_entity_ingestion_pipeline(
                             green_cnt = c_stats["green"]
                             tot_cnt = c_stats["total"]
 
-                            if red_cnt > 0:
+                            if f_rec.get("needs_ocr"):
+                                border_color = "#3B82F6"
+                                status_line = "🕓 Saved in Vault · Click '🔍 Run AI OCR' or Open File"
+                            elif (
+                                bucket_key == "screenshots"
+                                and tot_cnt == 1
+                                and float(f_df["Amount"].iloc[0] or 0.0) == 0.0
+                            ):
+                                border_color = "#4B5563"
+                                status_line = str(
+                                    f_rec.get("note")
+                                    or "🖼️ Account/Loan Summary Screenshot · Click to view"
+                                )
+                            elif red_cnt > 0:
                                 border_color = "#8A4B50"
                                 status_line = f"🔴 {red_cnt} Red · 🟡 {yellow_cnt} Yellow · 🟢 {green_cnt} Sure"
                             elif yellow_cnt > 0:
@@ -8568,28 +9359,78 @@ def render_entity_ingestion_pipeline(
                                     sync_entity_ledger_from_files(active_entity, active_tax_year)
                                     st.rerun()
 
-                    # Direct single-column quick add popover so user can also drop directly into a specific column
-                    with st.popover(f"+ Add to {bucket_key.upper()}", use_container_width=True):
+                    # Direct single-column quick add section with explicit Upload button & clean queue reset
+                    col_nonce_key = f"_{key_prefix}_col_up_nonce_{bucket_key}_{active_entity}_{active_tax_year}"
+                    col_nonce = int(st.session_state.get(col_nonce_key, 0))
+                    col_msg_key = f"_{key_prefix}_col_up_msg_{bucket_key}_{active_entity}_{active_tax_year}"
+                    if st.session_state.get(col_msg_key):
+                        st.success(str(st.session_state.pop(col_msg_key)))
+
+                    with st.expander(f"＋ Add to {bucket_key.upper()}", expanded=False):
                         col_up = st.file_uploader(
-                            f"Add {col_subtitle}",
+                            f"Select {col_subtitle}",
                             type=allowed_exts,
                             accept_multiple_files=True,
-                            key=f"{key_prefix}_col_up_{bucket_key}_{active_entity}_{active_tax_year}",
+                            key=f"{key_prefix}_col_up_{bucket_key}_{active_entity}_{active_tax_year}_{col_nonce}",
                         )
                         if col_up:
-                            added_c = 0
-                            for uf in col_up:
-                                sig = f"{uf.name}::{len(uf.getvalue())}"
-                                if not any(x.get("signature") == sig for x in files_list):
+                            st.caption(f"📂 {len(col_up)} file(s) staged — click Upload below:")
+                            if st.button(
+                                f"⬆️ Upload {len(col_up)} File(s) to {bucket_key.upper()}",
+                                key=f"{key_prefix}_btn_col_up_{bucket_key}_{active_entity}_{active_tax_year}_{col_nonce}",
+                                type="primary",
+                                use_container_width=True,
+                            ):
+                                c_prog = st.progress(0.0, text=f"Uploading to {bucket_key.upper()}...")
+                                added_c = 0
+                                for idx_c, uf in enumerate(col_up, start=1):
+                                    c_prog.progress(
+                                        idx_c / len(col_up),
+                                        text=f"Saving ({idx_c}/{len(col_up)}): {uf.name}...",
+                                    )
                                     ok_c, _, _ = ingest_uploaded_file_object(
                                         uf,
                                         entity=active_entity,
                                         tax_year=active_tax_year,
                                         forced_bucket=bucket_key,
+                                        run_ocr_immediately=True,
                                     )
                                     if ok_c:
                                         added_c += 1
-                            if added_c > 0:
+                                c_prog.empty()
+                                st.session_state[col_nonce_key] = col_nonce + 1
+                                st.session_state[col_msg_key] = f"✅ Added {added_c} file(s) to {bucket_key.upper()}."
+                                st.toast(f"Added {added_c} file(s) to {bucket_key.upper()}.")
+                                st.rerun()
+                            if (
+                                bucket_key == "screenshots"
+                                and bool(st.session_state.get("google_genai_api_key", "").strip())
+                                and st.button(
+                                    f"🔍 Upload & Run AI OCR ({len(col_up)})",
+                                    key=f"{key_prefix}_btn_col_up_ocr_{bucket_key}_{active_entity}_{active_tax_year}_{col_nonce}",
+                                    type="secondary",
+                                    use_container_width=True,
+                                )
+                            ):
+                                c_prog = st.progress(0.0, text="Uploading & running OCR on screenshots...")
+                                added_c = 0
+                                for idx_c, uf in enumerate(col_up, start=1):
+                                    c_prog.progress(
+                                        idx_c / len(col_up),
+                                        text=f"OCR ({idx_c}/{len(col_up)}): {uf.name}...",
+                                    )
+                                    ok_c, _, _ = ingest_uploaded_file_object(
+                                        uf,
+                                        entity=active_entity,
+                                        tax_year=active_tax_year,
+                                        forced_bucket=bucket_key,
+                                        run_ocr_immediately=True,
+                                    )
+                                    if ok_c:
+                                        added_c += 1
+                                c_prog.empty()
+                                st.session_state[col_nonce_key] = col_nonce + 1
+                                st.session_state[col_msg_key] = f"✅ Added & OCR'd {added_c} screenshot(s)."
                                 st.rerun()
 
     # =========================================================================
@@ -10215,7 +11056,7 @@ def render_sidebar_session(authenticator: stauth.Authenticate) -> None:
         st.markdown(
             f"**Operator:** `{st.session_state.get('name', 'System Administrator')}`  \n"
             f"**Clearance:** `LEVEL-1 (ADMIN)`  \n"
-            f"**Auto-Logout:** `30m Inactivity`"
+            f"**Auto-Logout:** `60m Inactivity`"
         )
         if st.button("Sign Out", key="_sidebar_explicit_signout_btn", use_container_width=True):
             sign_out_current_session(authenticator)
@@ -10224,8 +11065,8 @@ def render_sidebar_session(authenticator: stauth.Authenticate) -> None:
 
 def require_auth() -> stauth.Authenticate:
     """
-    Enforce authentication across all pages with a 30-minute sliding inactivity timeout.
-    Locks the page and halts execution if the user is not authenticated.
+    Enforce authentication across all pages with a 60-minute sliding inactivity timeout.
+    Redirects to the main login gateway (`app.py`) if the user is not authenticated.
     Renders persistent sidebar controls when authenticated.
     """
     authenticator = get_authenticator()
@@ -10239,23 +11080,7 @@ def require_auth() -> stauth.Authenticate:
             pass
 
     if not auth_status:
-        st.markdown('<div class="axiom-eyebrow">SECURITY GATEWAY // ACCESS RESTRICTED</div>', unsafe_allow_html=True)
-        if st.session_state.get("_session_expired_notice"):
-            st.warning("Session locked after 30 minutes of inactivity. Please sign in again.")
-        st.subheader("Authentication Required")
-        st.markdown(
-            """
-            <div class="axiom-panel">
-                <p style="margin: 0; color: #A0A5B1; font-size: 0.92rem;">
-                    This terminal is locked. Please authenticate via the main gateway to access
-                    Axiom Ledger modules.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Return to Security Gateway"):
-            st.switch_page("app.py")
+        st.switch_page("app.py")
         st.stop()
 
     render_sidebar_session(authenticator)

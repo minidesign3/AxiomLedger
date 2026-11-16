@@ -62,3 +62,15 @@ Thumbs.db
 # --- AI / Assistant Tooling ---
 .aider*
 .aider-desk/
+
+# --- Sensitive Data Hardening ---
+!.env.example
+pb_data/
+exports/
+uploads/
+statements/
+logs/
+*.tsv
+*.parquet
+!fixtures/sanitized_*
+

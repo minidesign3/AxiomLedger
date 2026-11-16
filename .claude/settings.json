@@ -1,0 +1,73 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(.env.example)",
+      "Read(fixtures/sanitized_*)",
+      "Grep(fixtures/sanitized_*)",
+      "Glob(fixtures/sanitized_*)"
+    ],
+    "deny": [
+      "Read(.env*)",
+      "Edit(.env*)",
+      "Grep(.env*)",
+      "Glob(.env*)",
+      "Read(**/*.db)",
+      "Edit(**/*.db)",
+      "Grep(**/*.db)",
+      "Glob(**/*.db)",
+      "Read(**/*.sqlite*)",
+      "Edit(**/*.sqlite*)",
+      "Grep(**/*.sqlite*)",
+      "Glob(**/*.sqlite*)",
+      "Read(pb_data/**)",
+      "Edit(pb_data/**)",
+      "Grep(pb_data/**)",
+      "Glob(pb_data/**)",
+      "Read(data/**)",
+      "Edit(data/**)",
+      "Grep(data/**)",
+      "Glob(data/**)",
+      "Read(exports/**)",
+      "Edit(exports/**)",
+      "Grep(exports/**)",
+      "Glob(exports/**)",
+      "Read(uploads/**)",
+      "Edit(uploads/**)",
+      "Grep(uploads/**)",
+      "Glob(uploads/**)",
+      "Read(statements/**)",
+      "Edit(statements/**)",
+      "Grep(statements/**)",
+      "Glob(statements/**)",
+      "Read(logs/**)",
+      "Edit(logs/**)",
+      "Grep(logs/**)",
+      "Glob(logs/**)",
+      "Read(**/*.csv)",
+      "Edit(**/*.csv)",
+      "Grep(**/*.csv)",
+      "Glob(**/*.csv)",
+      "Read(**/*.pdf)",
+      "Edit(**/*.pdf)",
+      "Grep(**/*.pdf)",
+      "Glob(**/*.pdf)",
+      "Read(**/*.xlsx)",
+      "Edit(**/*.xlsx)",
+      "Grep(**/*.xlsx)",
+      "Glob(**/*.xlsx)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-sensitive-data.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
