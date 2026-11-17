@@ -1,0 +1,4 @@
+# Grandfather allow-list for scripts/check_file_length.py
+# Format: <relpath> <max_lines>.  Ceilings are SHRINK-ONLY.
+# Goal: every entry reaches <= 500 lines, then is deleted.
+pages/1_Dashboard.py 534

@@ -1,0 +1,113 @@
+[project]
+name = "axiom-ledger"
+version = "0.1.0"
+description = "Local, encrypted property-accounting workspace (Streamlit) for NZ IRD / US IRS rental ledgers."
+requires-python = ">=3.10"
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# utils.py is a large legacy module being incrementally split into axiom_core
+# and future packages; keep the rule set pragmatic rather than blocking.
+extend-exclude = [".venv", "data", "pb_data", "exports", "uploads", "statements", "logs"]
+
+[tool.ruff.lint]
+# C901 (mccabe) + PLR0912/0913/0915 cap function size & complexity so no new
+# God-function can land. scripts/check_file_length.py caps file size. Together
+# they enforce the "no file > 500 lines, no giant functions" rule in CI.
+select = ["E", "F", "W", "I", "UP", "B", "C901", "PLR0912", "PLR0913", "PLR0915"]
+ignore = [
+    "E501",  # line length is handled by black, not enforced hard
+    "E741",  # ambiguous variable names (legacy code uses l/r)
+    "B008",  # function calls in argument defaults (Streamlit patterns)
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.pylint]
+max-statements = 80
+max-branches = 20
+max-args = 8
+
+[tool.ruff.lint.per-file-ignores]
+# Pages intentionally run module-level Streamlit side effects on import.
+"pages/*.py" = ["E402"]
+"app.py" = ["E402"]
+# utils.py is the legacy God-module being decomposed (phases D1-D23). Its
+# oversized functions and long-standing dead-assignment hints are grandfathered
+# until the owning functions are extracted (then the clean-up lands with them).
+# Remove this line once utils.py is a thin shim.
+"utils.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "F841", "B007"]
+# axiom_state.py: init_workspace_state() is one long, order-sensitive Streamlit
+# bootstrap moved here byte-for-byte from utils.py (phase D1). Splitting it is a
+# separate reviewed change, so the size rules stay grandfathered until then.
+"axiom_state.py" = ["C901", "PLR0912", "PLR0915"]
+# axiom_rules.py: match_memorized_or_rule is the ~190-line rules engine moved
+# byte-for-byte (phase D4). Its 36 branches are deliberate precedence rules
+# (loan > memorized > keyword); decomposing it is a separate reviewed change.
+"axiom_rules.py" = ["C901", "PLR0912", "PLR0915"]
+# axiom_entities.py / axiom_properties.py (phase D5): rename_entity and
+# rename_entity_property were moved byte-for-byte. They migrate session state,
+# the vault and five SQLite tables in one transaction-like pass; splitting them
+# is a separate reviewed change.
+"axiom_entities.py" = ["C901", "PLR0912"]
+"axiom_properties.py" = ["C901"]
+# axiom_account_codes.py (phase D6): rename_entity_account_code (migrates the
+# store, rules, session ledgers and two SQLite tables), _derive_smart_property_tokens
+# and detect_property_from_text were moved byte-for-byte. Splitting them is a
+# separate reviewed change.
+"axiom_account_codes.py" = ["C901", "PLR0912"]
+# axiom_dataframe.py (phase D10): normalize_financial_dataframe is the ~320-line
+# smart header/column mapper moved byte-for-byte. Its 36 branches are the
+# per-format mapping rules; splitting it is a separate reviewed change.
+"axiom_dataframe.py" = ["C901", "PLR0912", "PLR0915"]
+# axiom_parsing.py (phase D11): the PDF/XLSX/ODS/CSV readers were moved
+# byte-for-byte. parse_xlsx_without_openpyxl, extract_other_document_tables and
+# _read_bank_csv_bytes are branch-heavy format dispatchers; splitting them is a
+# separate reviewed change.
+"axiom_parsing.py" = ["C901", "PLR0912", "F841"]
+# axiom_workbook.py (phase D12): parse_coded_workbook_sheets is the ~390-line
+# multi-sheet classifier moved byte-for-byte (xlsx/xls/ods/csv readers, EOY
+# statements, pivot harvesting, payee-rule consolidation). Splitting it is a
+# separate reviewed change.
+"axiom_workbook.py" = ["C901", "PLR0912", "PLR0915"]
+# axiom_ledger.py (phase D9): _load_uploaded_files_from_sqlite was moved
+# byte-for-byte; it re-hydrates file records, auto-repairs preambled CSVs and
+# recovers orphaned vault files in one pass. Splitting it is a separate
+# reviewed change. (The traffic-light engine lives in axiom_traffic.py.)
+"axiom_ledger.py" = ["C901", "PLR0912", "PLR0915"]
+# axiom_loan_ocr.py (phase D14): parse_loan_screenshot_json is a lenient
+# 22-branch normaliser for free-form model JSON moved byte-for-byte.
+"axiom_loan_ocr.py" = ["C901", "PLR0912"]
+# axiom_ingestion.py (phase D15a): _reconcile_vault_and_broken_csvs repairs the
+# vault/SQLite/ledger trio in one pass moved byte-for-byte.
+"axiom_ingestion.py" = ["C901", "PLR0912"]
+# axiom_upload.py (phase D15b): ingest_uploaded_file_object dispatches CSV /
+# PDF / XLSX / screenshot uploads in one pass moved byte-for-byte.
+"axiom_upload.py" = ["C901", "PLR0912"]
+# axiom_tasks.py (phase D8): the worker loop / operator controls / status
+# summary were moved byte-for-byte. get_background_status_summary iterates task
+# ids without needing them (B007 was grandfathered on utils.py too).
+"axiom_tasks.py" = ["B007"]
+# Tooling scripts: linear orchestration, not product code.
+"scripts/gate.py" = ["C901", "PLR0912", "PLR0915"]
+"scripts/check_extraction.py" = ["C901"]
+# Pre-existing data-sanitiser debt, out of the app hot path (never touched).
+"scripts/sanitize_fixture.py" = ["I001", "F401", "C901"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = false
+# Start lenient; tighten module-by-module as utils.py is decomposed.
+exclude = "(^\\.venv/|^data/|^pb_data/)"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

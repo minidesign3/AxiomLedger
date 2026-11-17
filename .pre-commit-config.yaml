@@ -1,0 +1,26 @@
+# Pre-commit guardrails for Axiom Ledger.
+# Install once:  pip install pre-commit && pre-commit install
+# Run on demand: pre-commit run --all-files
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: axiom-file-length
+        name: No Python file over 500 lines (shrink-only allow-list)
+        entry: python scripts/check_file_length.py
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: axiom-extraction-identity
+        name: Extracted functions stay logic-identical to baseline
+        entry: python scripts/check_extraction.py
+        language: system
+        pass_filenames: false
+        types: [python]

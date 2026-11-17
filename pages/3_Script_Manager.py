@@ -1,10 +1,7 @@
 from datetime import datetime
-import importlib
-import time
-import streamlit as st
-import utils
 
-importlib.reload(utils)
+import streamlit as st
+
 from utils import (
     get_background_status_summary,
     init_workspace_state,
@@ -29,6 +26,11 @@ render_workspace_header(show_status_indicator=True)
 
 st.markdown('<div class="axiom-eyebrow">MODULE 03 // BACKGROUND THREAD SUPERVISOR</div>', unsafe_allow_html=True)
 st.title("Background Script Manager")
+st.caption(
+    "⚠ Demonstration mode: these worker threads emit heartbeat and log telemetry to "
+    "showcase the supervisor UI. They do not yet perform live PDF extraction, OCR, or "
+    "categorization — wire them to the real pipelines before relying on them in production."
+)
 st.markdown('<div class="axiom-divider"></div>', unsafe_allow_html=True)
 
 summary = get_background_status_summary()
@@ -163,19 +165,30 @@ with term_ctrl_col3:
         key="_script_mgr_autopoll",
     )
 
-log_lines = st.session_state.get("background_task_logs", [])
-terminal_text = "\n".join(log_lines[-80:]) if log_lines else "[NO LOG OUTPUT]"
+_poll_interval = 1.5 if (auto_stream and summary["running_count"] > 0) else None
 
-st.code(terminal_text, language="log")
 
-st.text_area(
-    "Raw Thread Log Buffer (Read-Only Stream)",
-    value=terminal_text,
-    height=200,
-    disabled=True,
-    label_visibility="collapsed",
-)
+@st.fragment(run_every=_poll_interval)
+def _render_live_log() -> None:
+    """Auto-refresh only the log terminal (not the whole page) while polling is on.
 
-if auto_stream and summary["running_count"] > 0:
-    time.sleep(1.5)
-    st.rerun()
+    Replaces the previous `time.sleep(1.5); st.rerun()` pattern, which blocked the
+    server script thread and forced a full-page rerun (losing scroll position /
+    flicker) every 1.5s. `st.fragment(run_every=...)` isolates the rerun scope to
+    just this block.
+    """
+    log_lines = st.session_state.get("background_task_logs", [])
+    terminal_text = "\n".join(log_lines[-80:]) if log_lines else "[NO LOG OUTPUT]"
+
+    st.code(terminal_text, language="log")
+
+    st.text_area(
+        "Raw Thread Log Buffer (Read-Only Stream)",
+        value=terminal_text,
+        height=200,
+        disabled=True,
+        label_visibility="collapsed",
+    )
+
+
+_render_live_log()

@@ -1,0 +1,262 @@
+/* Core Surfaces & Typography */
+.stApp {
+    background-color: #121316;
+    color: #E2E4E9;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.01em;
+}
+
+/* Sidebar-Responsive Container & Compact Table Layout */
+.main .block-container {
+    max-width: 100% !important;
+    padding-left: 1.35rem !important;
+    padding-right: 1.35rem !important;
+    padding-top: 1.5rem !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+}
+
+[data-testid="stDataFrame"],
+[data-testid="stDataEditor"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+.axiom-compact-rule-row {
+    background-color: #16181C;
+    border: 1px solid #2A2D34;
+    border-radius: 4px;
+    padding: 0.42rem 0.65rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+}
+
+/* Sidebar Styling */
+[data-testid="stSidebar"] {
+    background-color: #16181C !important;
+    border-right: 1px solid #262930 !important;
+    min-width: 210px !important;
+    max-width: 255px !important;
+}
+
+[data-testid="stSidebarNav"] ul li a {
+    border-radius: 4px !important;
+    margin: 2px 8px !important;
+    color: #A0A5B1 !important;
+    font-weight: 500 !important;
+    transition: background-color 0.15s ease, color 0.15s ease !important;
+}
+
+[data-testid="stSidebarNav"] ul li a:hover {
+    background-color: #202329 !important;
+    color: #E2E4E9 !important;
+}
+
+[data-testid="stSidebarNav"] ul li a[aria-current="page"] {
+    background-color: #24272E !important;
+    color: #F3F4F6 !important;
+    border-left: 2px solid #A0A5B1 !important;
+}
+
+/* Headings & Technical Labels */
+h1, h2, h3, h4, h5, h6 {
+    color: #F3F4F6 !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.02em !important;
+}
+
+.axiom-eyebrow {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #7D828F;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.axiom-workspace-banner {
+    background-color: #16181C;
+    border: 1px solid #2A2D34;
+    border-left: 3px solid #A0A5B1;
+    border-radius: 4px;
+    padding: 0.85rem 1.25rem;
+    margin-bottom: 0.75rem;
+}
+
+.axiom-workspace-banner h2 {
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 1.2rem !important;
+    font-weight: 600 !important;
+    color: #F3F4F6 !important;
+    letter-spacing: -0.01em !important;
+}
+
+.axiom-panel {
+    background-color: #1A1C20;
+    border: 1px solid #2A2D34;
+    border-radius: 4px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.axiom-settings-drawer {
+    background-color: #16181C;
+    border: 1px solid #3A3F4B;
+    border-left: 3px solid #A0A5B1;
+    border-radius: 4px;
+    padding: 0.9rem 1.25rem;
+    margin-bottom: 0.75rem;
+}
+
+[data-testid="stPopover"] > div > button {
+    background-color: #262930 !important;
+    color: #E2E4E9 !important;
+    border: 1px solid #3A3F4B !important;
+    border-radius: 3px !important;
+    padding: 0.42rem 0.55rem !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stPopover"] > div > button:hover {
+    background-color: #323640 !important;
+    border-color: #6C727F !important;
+    color: #FFFFFF !important;
+}
+
+.axiom-divider {
+    border-top: 1px solid #262930;
+    margin: 1.1rem 0;
+}
+
+/* Tabs Styling - Strictly Flat Charcoal/Metallic */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0.5rem;
+    background-color: #16181C;
+    padding: 0.35rem;
+    border: 1px solid #262930;
+    border-radius: 4px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    background-color: transparent !important;
+    color: #8E939F !important;
+    border-radius: 3px !important;
+    padding: 0.45rem 1rem !important;
+    font-size: 0.86rem !important;
+    font-weight: 500 !important;
+    border: none !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: #24272E !important;
+    color: #F3F4F6 !important;
+    border: 1px solid #3A3F4B !important;
+}
+
+.stTabs [data-baseweb="tab-highlight"] {
+    display: none !important;
+}
+
+/* Form Containers & Inputs - Flat Metallic/Graphite (No Glow) */
+[data-testid="stForm"] {
+    background-color: #1A1C20 !important;
+    border: 1px solid #2A2D34 !important;
+    border-radius: 4px !important;
+    padding: 1.5rem !important;
+    box-shadow: none !important;
+}
+
+.stTextInput > div > div > input,
+.stPasswordInput > div > div > input,
+.stSelectbox > div > div > div,
+.stNumberInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background-color: #121316 !important;
+    color: #E2E4E9 !important;
+    border: 1px solid #2E323B !important;
+    border-radius: 3px !important;
+    box-shadow: none !important;
+}
+
+.stTextInput > div > div > input:focus,
+.stPasswordInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: #8E939F !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+/* File Uploader */
+[data-testid="stFileUploader"] section {
+    background-color: #16181C !important;
+    border: 1px dashed #3A3F4B !important;
+    border-radius: 4px !important;
+}
+
+/* Buttons & Download Buttons - Muted Metallic / Graphite */
+.stButton > button,
+.stDownloadButton > button,
+[data-testid="stFormSubmitButton"] > button {
+    background-color: #262930 !important;
+    color: #E2E4E9 !important;
+    border: 1px solid #3A3F4B !important;
+    border-radius: 3px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.02em !important;
+    padding: 0.42rem 0.95rem !important;
+    box-shadow: none !important;
+    transition: background-color 0.15s ease, border-color 0.15s ease !important;
+}
+
+/* Primary Button Highlight (Used for Active Entity & Active Financial Year Pill) */
+.stButton > button[kind="primary"] {
+    background-color: #323640 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #A0A5B1 !important;
+    font-weight: 600 !important;
+    box-shadow: none !important;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover,
+[data-testid="stFormSubmitButton"] > button:hover {
+    background-color: #323640 !important;
+    border-color: #6C727F !important;
+    color: #FFFFFF !important;
+    box-shadow: none !important;
+}
+
+.stButton > button:active,
+.stButton > button:focus,
+.stDownloadButton > button:active,
+.stDownloadButton > button:focus,
+[data-testid="stFormSubmitButton"] > button:active,
+[data-testid="stFormSubmitButton"] > button:focus {
+    background-color: #202329 !important;
+    border-color: #8E939F !important;
+    color: #E2E4E9 !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+/* Metrics & Alerts */
+[data-testid="stMetric"] {
+    background-color: #1A1C20;
+    border: 1px solid #2A2D34;
+    border-radius: 4px;
+    padding: 1rem 1.25rem;
+}
+
+[data-testid="stAlert"] {
+    background-color: #1A1C20 !important;
+    border: 1px solid #3A3F4B !important;
+    color: #D0D4DC !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+}

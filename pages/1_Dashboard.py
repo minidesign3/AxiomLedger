@@ -1,11 +1,10 @@
-import importlib
-from pathlib import Path
+import os
 import re
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
-import utils
 
-importlib.reload(utils)
 from utils import (
     DEFAULT_LOCAL_LLM_MODEL,
     STANDARD_COLUMNS,
@@ -13,7 +12,7 @@ from utils import (
     add_entity_account_code,
     apply_ai_fallback_categorization,
     apply_rule_categorization,
-    evaluate_row_traffic_light,
+    compute_traffic_light_columns,
     export_xero_master_csv,
     format_tax_year_period,
     get_account_code_options,
@@ -28,11 +27,9 @@ from utils import (
     get_file_red_counts,
     get_memorized_rules,
     get_property_aliases,
-    get_row_status_badge,
     import_codes_workbook_into_entity,
     is_portfolio_wide_code,
     is_property_unassigned,
-    is_row_red_or_unsure,
     is_uncategorized,
     parse_coded_workbook_sheets,
     render_item_property_setup_matrix,
@@ -138,7 +135,12 @@ with tab_codes:
     st.markdown('<div class="axiom-divider" style="margin: 0.85rem 0;"></div>', unsafe_allow_html=True)
 
     with st.expander("📂 Optional: Import from `Codes.xlsx` or Other Coded Spreadsheets", expanded=False):
-        default_codes_xlsx = Path("/home/ccjp/Desktop/Accounting CSV Parser/Codes.xlsx")
+        default_codes_xlsx = Path(
+            os.environ.get(
+                "AXIOM_CODES_XLSX",
+                "/home/ccjp/Desktop/Accounting CSV Parser/Codes.xlsx",
+            )
+        )
         if default_codes_xlsx.exists():
             with st.container(border=True):
                 st.markdown(
@@ -409,17 +411,7 @@ with tab_master:
         work_master["Account Code"] = (
             work_master["Account Code"].fillna("Uncategorized").astype(str).str.strip().replace("", "Uncategorized")
         )
-        tiers_list: list[str] = []
-        badges_list: list[str] = []
-        for _, r in work_master.iterrows():
-            t_val, b_val = evaluate_row_traffic_light(
-                property_val=r.get("Property", ""),
-                account_code=r.get("Account Code", ""),
-                description=r.get("Description", ""),
-                entity=active_entity,
-            )
-            tiers_list.append(t_val)
-            badges_list.append(b_val)
+        tiers_list, badges_list = compute_traffic_light_columns(work_master, entity=active_entity)
         work_master["Status"] = badges_list
         work_master["_tier"] = tiers_list
 
