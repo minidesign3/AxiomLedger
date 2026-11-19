@@ -952,3 +952,330 @@ file-length gate.
 - **Privacy:** all tests use temp SQLite / sanitised fixtures per `AGENTS.md`;
   no reads of `data/`, `*.db`, exports, or secrets; all network clients
   (Gemini/OpenAI/SMTP) monkeypatched in tests.
+
+
+---
+
+# 11. UI Cleanup — Navigation, Header & Button Declutter
+
+## 11.1 Goal
+Make the app easier to read and use:
+- Give pages names that say what they do. "app" and "Dashboard" currently tell the user nothing.
+- Remove duplicate pages, buttons and Settings tabs.
+- Shrink the busy top-right corner to one status control.
+- Give every control exactly one home.
+
+Constraints: dark charcoal/graphite palette only, ≤ 500 lines per file, and the Settings exclusive-view rule is preserved.
+
+## 11.2 Analysis — what's wrong today (UI expert review)
+
+**Same thing shown in 2–3 places:**
+
+| Thing | Where it appears now |
+|---|---|
+| Upload / 4-column board (`render_entity_ingestion_pipeline`) | `app.py`, `pages/2_Data_Ingestion.py` (an exact duplicate), Settings tab 03 |
+| Property Loans (`render_property_loans_block`) | `pages/4_Property_Loans.py`, Settings tab 02 |
+| Item + Property Setup | Dashboard tab 01, Settings tab 04 |
+| ⚙ Settings button | Header (`_top_toolbar_settings_btn`) and sidebar (`_sidebar_open_settings_btn`) |
+| Entity + year title | Header banner H2 and Dashboard `st.title` |
+
+**What "app" vs "Dashboard" actually are:**
+- **"app"** (`app.py`) is the login gate plus the Upload & 4-column File Board. It is where files come in. Streamlit names it after the filename.
+- **"Dashboard"** (`pages/1_Dashboard.py`) is review and bookkeeping: Item/Rule setup, Property matching, the Master Ledger with red/yellow/green alerts, and the Accountant export. It is not really a dashboard.
+- **"Script Manager"** is a demo-only thread supervisor, and it labels itself as not doing real work.
+
+**Top-right corner today (per page):**
+- Two badges: `GEMINI` and `LOCAL AI`.
+- The `⚙ Settings (Orgs, AI & Accounts)` button.
+- The `BACKGROUND DAEMONS` card, which reports the status of the demo threads.
+- Streamlit's own ⋮ toolbar menu. This is probably the "tool" icon you meant. It comes from `toolbarMode="minimal"` in `.streamlit/config.toml`.
+- Below these, a full-width financial-year pill bar (`2026 … 2029 | + Add Year`).
+
+## 11.3 Control inventory & verdicts
+
+| Control | Location | Verdict |
+|---|---|---|
+| Workspace banner (eyebrow + pill + H2) | `render_workspace_header` | **Slim** to one line: `Entity · NZ IRD · FY2026 (period)` |
+| GEMINI + LOCAL AI badges | `_render_connection_badge` | **Merge** into a single `● AI ▾` status popover |
+| BACKGROUND DAEMONS card | `render_global_status_indicator` | **Move** into the same popover |
+| Header ⚙ Settings button | `_top_toolbar_settings_btn` | **Remove.** The sidebar button becomes the only entry |
+| Year pill bar + "+ Add Year" | header `year_bar_cols` | **Move** to the sidebar as `st.selectbox` + a small `＋` popover |
+| Streamlit ⋮ toolbar | `config.toml` | **Hide extras** with `toolbarMode="viewer"` |
+| Sidebar org buttons `● Name [NZ IRD] (rows)` | `render_sidebar_session` | **Keep, simplified.** Show name + muted row count, drop the `[jur]` text |
+| "SYSTEM CONFIGURATION" / "CORE" eyebrows | sidebar | **Remove** |
+| Operator / Clearance / Auto-Logout block | sidebar | **Collapse** to `👤 name  [Sign out]`. The hard-coded "Clearance" goes; Auto-Logout info moves to the Accounts tab |
+| "Open Item + Property Setup & Master Ledger →" | `app.py`, `2_Data_Ingestion.py` | **Remove.** Navigation replaces it |
+| "← Back to 4-Column File Upload Board" | `1_Dashboard.py` | **Remove** |
+
+## 11.4 Proposed page structure (`st.navigation` / `st.Page`, streamlit 1.67)
+
+```
+app.py  = router only (set_page_config, auth gate, chrome, st.navigation(...).run())
+  Workspace
+    📥 Inbox            views/inbox.py      ← was app.py board ("app")
+    ✅ Review & Ledger  views/ledger.py     ← was pages/1_Dashboard.py ("Dashboard")
+    🏦 Loans            views/loans.py      ← was pages/4_Property_Loans.py
+  (debug only, AXIOM_DEBUG=1)
+    🛠 Background Jobs  views/jobs.py       ← was pages/3_Script_Manager.py
+DELETED: pages/2_Data_Ingestion.py (duplicate of Inbox)
+```
+
+- **Review & Ledger:** the metrics row stays on top. Reorder the tabs to Master Ledger → Accountant Export → Properties → Rules & Items, and drop the `01 //` numbering.
+- **Before login:** `st.navigation([login_page])`. The nav is hidden naturally, which replaces the `stSidebarNav {display:none}` CSS hack in `axiom_ui_styles.py`.
+- **Alternative name for "Dashboard":** "Ledger". For "app": "Upload". Your choice.
+
+## 11.5 Wireframes
+
+**Header (every page):**
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ BT Property Holdings · NZ IRD · FY2026 (Apr 25–Mar 26)       ● AI ▾  │
+├──────────────────────────────────────────────────────────────────────┤
+│ Review & Ledger                                                      │
+│ [Net $…] [🟢 Sure …] [🟡 Check …] [🔴 Missing …]                     │
+```
+
+**The `● AI ▾` popover** shows one dot: graphite when OK, muted red `#8A6B70` on error. Its contents:
+```
+ Gemini      ● Connected  (active)
+ Local AI    ○ Offline
+ Background  ▪ Idle
+ [Open AI settings →]
+```
+
+**Sidebar:**
+```
+AXIOM LEDGER
+─ Workspace ─────
+ 📥 Inbox
+ ✅ Review & Ledger
+ 🏦 Loans
+─ Organization ──
+ ● BT Property Holdings   1,204
+ ○ Marine Trust              88
+─ Financial year ─
+ [ 2026        ▾ ] [＋]
+ …
+ ⚙ Settings
+ 👤 admin       [Sign out]
+```
+
+## 11.6 Settings drawer — final tabs
+
+- **Remove** the tabs that duplicate pages: 02 Loans, 03 Upload & File Table, 04 Item + Property Setup.
+- **Keep:** Organizations & Properties · AI & Connections · Accounts & Security · Email & Reminders.
+- **Header:** just "Settings". Keep the exclusive view and `st.stop()`.
+
+## 11.7 Options
+
+| Option | Scope | Effort | Risk |
+|---|---|---|---|
+| **A. Minimal cleanup** | Delete Data Ingestion page. Hide Script Manager. Remove the header Settings button, the cross-nav buttons and the daemons card. Add the merged AI popover. Move the year selector to the sidebar. Rename via filenames (`1_Review_Ledger.py`). "app" keeps its name. | ~½ day | Low |
+| **B. Full page-structure rework (recommended)** | A + `st.navigation` router (gives real names "Inbox" / "Review & Ledger", grouped nav, nav hidden before login) + remove the 3 duplicate Settings tabs + reorder Ledger tabs | ~1–1.5 days | Medium |
+| **C. B + visual polish** | B + move inline CSS into `assets/styles.css` with CSS variables, sentence-case labels instead of ALL-CAPS eyebrows, Material icons (`:material/…:`), `st.toast` for flash messages. Covers §4 U1/U5/U6/U7 | ~2–3 days | Medium–High (many tests assert HTML) |
+
+**Recommendation:** B, with sentence-case labels and Material icons from C on the nav and buttons only.
+
+## 11.8 Files to modify / create (Option B)
+
+| File | Change |
+|---|---|
+| `app.py` | Becomes the router: one `set_page_config`, auth gate/login page, chrome, `st.navigation(...)` |
+| `views/inbox.py` (new) | Body of the old `app.py` board (`key_prefix="front_board"` kept) |
+| `views/ledger.py` (new) | From `pages/1_Dashboard.py`. Cross-nav button and duplicate title removed, tabs reordered |
+| `views/loans.py` (new) | From `pages/4_Property_Loans.py` |
+| `views/jobs.py` (new) | From `pages/3_Script_Manager.py`. Registered only when `AXIOM_DEBUG=1` |
+| `pages/*.py` | Deleted. The `pages/` dir must go, or Streamlit's auto-discovery conflicts with `st.navigation` |
+| `axiom_nav.py` (new) | `st.Page` definitions + page constants (no scattered `switch_page` strings) |
+| `axiom_ui_status.py` (new) | `● AI ▾` status popover (merges the badges + daemon status) |
+| `axiom_ui_chrome.py` | Slim `render_workspace_header` (banner + status popover only). In `render_sidebar_session`: year selectbox + add-year popover, simplified org list, single Settings, compact user/sign-out. Page-change detection reworked (see risks) |
+| `axiom_ui_settings.py` | Drop tabs 02/03/04 and their imports. Header becomes "Settings" |
+| `axiom_ui_settings_email.py` | L74 `switch_page("pages/4_Property_Loans.py")` → Loans page from `axiom_nav` |
+| `axiom_auth.py` / `require_auth` (chrome) | Under the router, the auth gate lives in `app.py`. `require_auth` reduces to a guard + `st.stop()` |
+| `axiom_ui_styles.py` | Remove the `stSidebarNav` hide hack. Add small styles for the status dot |
+| `.streamlit/config.toml` | `toolbarMode = "viewer"` |
+| `tests/test_axiom_ui_chrome.py`, `tests/test_axiom_ui_settings.py` (+ new `tests/test_axiom_nav.py`, `tests/test_axiom_ui_status.py`) | Update the key/label assertions. Add nav and status tests |
+| `scripts/check_file_length.py` allowlist | Update if paths change |
+| `README.md` | Update the page list / run instructions |
+
+## 11.9 Dependencies & ripple effects
+
+- **Settings exclusive view:** must still render alone and `st.stop()` before any page body. Under the router it runs once, before `pg.run()`.
+- **Close Settings on page change:** `ctx.main_script_path` is always `app.py` under `st.navigation`, so the current detection would silently stop working. Compare the `st.navigation(...)` returned page's `url_path` against `_last_rendered_page` instead. Add a test for this.
+- **`switch_page` targets** in `axiom_ui_chrome.py` (sign-out, auth gate) and `axiom_ui_settings_email.py` move to `axiom_nav` constants.
+- **Widget state:** the ingestion pipeline currently runs with three `key_prefix` values (`front_board`, `ing_page`, `settings_file_board`). Keep `front_board` and drop the others.
+- **Sidebar cost:** `get_entity_ledger(ent, year)` runs for every org on every rerun just to show row counts. Cache it, or show the count only for the active org.
+- **`utils.py`:** stays a re-export shim (~484 lines). New code goes into new `axiom_*` modules only.
+
+## 11.10 Implementation steps (each step is a separate, testable task)
+
+1. **Nav scaffold:** add `axiom_nav.py` and move the page bodies into `views/` (bodies moved unchanged). Turn `app.py` into the router. Delete `pages/`. Smoke-test that login, each page and sign-out work.
+2. **Page-change detection:** fix it for the router and keep the Settings close-on-navigate rule. Add a test.
+3. **Header slim-down:** new `axiom_ui_status.py` popover. Remove the header Settings button, the badges, the daemons card and the year pill bar from `render_workspace_header`.
+4. **Sidebar rework:** year selectbox + `＋` popover, simplified org buttons, single Settings button, compact user + Sign out. Cache the row counts.
+5. **Remove cross-nav buttons and duplicates:** take out the "Open…/Back…" buttons, the duplicate Ledger title and the Data Ingestion duplicate. Reorder the Ledger tabs.
+6. **Settings drawer:** remove tabs 02/03/04 and retarget the email-tab Loans link.
+7. **Polish (light C):** sentence-case nav/button labels, Material icons, `toolbarMode="viewer"`.
+8. **Verify:** `pytest`, `ruff`, `scripts/check_file_length.py`, then a manual QA pass in the browser (login → each page → Settings open/close via sidebar click → sign out).
+
+## 11.11 Risks & considerations
+
+- **Tests:** many assert exact button keys and labels (`_top_toolbar_settings_btn`, `_fy_pill_btn_*`, `"{ENTITY} [NZ IRD] (2)"`, settings tab key prefixes). These are intentional test updates, not regressions.
+- **Auto-discovery conflict:** `st.navigation` together with an existing `pages/` dir causes Streamlit to ignore or warn about the auto-discovered pages, so `pages/` must be removed in the same step.
+- **Bookmarks:** URLs change (`/Dashboard` → `/ledger`). This is a local app, so the impact is low.
+- **Behaviour change:** the year selector moves from a pill bar to a dropdown. It takes one more click but scales past 4 years.
+- **Out of scope:** this is not the byte-for-byte §10 decomposition. These are deliberate UI changes, so if `scripts/gate.py` is run on the touched modules it needs `--allow-changed`.
+- **Privacy:** no real data is read during implementation or QA. Use `fixtures/sanitized_*` only.
+
+## 11.12 Implementation status (Option B, names "Inbox" / "Review & Ledger")
+
+✅ Done & verified (pytest green, ruff clean, file-length guard OK):
+- `app.py` is now the router (login gate → reminder check → `st.navigation` → sidebar → header → `page.run()`). `axiom_nav.py` holds page registry + `*_PAGE` constants; `views/{inbox,ledger,loans,jobs}.py`; `pages/` removed (old files backed up to `/tmp/axiom_pages_backup`, also in git history).
+- Header: one-line banner + `axiom_ui_status.render_status_popover` ("● AI · <provider>" popover with both badges, background status, "Open AI settings"). Header Settings button, badges row, daemons card and year pills removed.
+- Sidebar: org switcher (`● Name · rows`, jurisdiction in tooltip), year `selectbox` (`_sidebar_fy_select`, `on_change` callback) + `＋` add-year popover, single ⚙ Settings toggle, `👤 name · auto-lock 60 min` + Sign out (now `st.rerun()` instead of `switch_page("app.py")`).
+- Settings close-on-navigate now keyed on the router's selected page (`page_identity`), tested.
+- Settings drawer: 4 tabs (Organizations & properties, AI & connections, Accounts & security, Email & reminders); the embedded loans block in the email tab was also removed (the "Open Property Loans Page" button → `LOANS_PAGE`).
+- Review & Ledger: cross-nav button + duplicate title removed; tabs reordered (Master ledger → Accountant → Properties → Rules & items); sentence-case metric labels.
+- `toolbarMode = "viewer"`; Background Jobs page only with `AXIOM_DEBUG=1`.
+- New tests: `tests/test_axiom_nav.py`, `tests/test_axiom_ui_status.py`; chrome/settings tests updated.
+
+Deliberately kept: `_UNAUTHENTICATED_SIDEBAR_CSS` in `axiom_ui_styles.py` — unauthenticated runs stop before `st.navigation`, so the CSS is still what hides the sidebar on the login screen.
+
+⏸ Pending: manual browser QA (login → each page → Settings open/close via nav click and org click → year switch/add → sign out). Not run by the agent because it would touch the real local DB.
+
+
+---
+
+# 12. Header AI status button: visual polish
+
+## 12.1 Goal
+The header status button ("○ AI · Local AI · offline") looks out of place next to the workspace banner. Make it read as part of the header, quiet when everything is normal and clear only when something is actually wrong.
+
+## 12.2 Analysis (UI expert)
+- **Two unrelated objects.** The banner is a bordered card with an accent stripe. The status is a bare, full-width grey button in a separate column.
+- **Height and alignment.** The card is about 4rem tall and the button about 2.4rem. The banner's `margin-bottom: .75rem` also pushes the button below the card's centre line.
+- **Typography.** The button uses the default button font plus Streamlit's ▾ chevron, while the banner uses an eyebrow label and an h2.
+- **Wording.** `○`/`●` are text glyphs that can't be coloured separately. "AI · Local AI · offline" is redundant, and "offline" reads like an alarm even though Local AI being off is often normal.
+- **Global styling.** The popover CSS is global (`[data-testid="stPopover"] > div > button`), so the fix must be scoped or it will also restyle the sidebar ＋ and the 📌 pins.
+- **Demo card.** The popover shows the demo-only "BACKGROUND DAEMONS" card on every page.
+
+## 12.3 Options
+- **A. Header card owns both sides (recommended).** The header becomes one `st.container(key="ws_header")` styled as the card. Status is a small chip inside it, on the right.
+  ```
+  ┌▌ NZ IRD · TAX PERIOD …                          ● Local AI ▾ ┐
+  │  BT Property Holdings — FY 2026                              │
+  └──────────────────────────────────────────────────────────────┘
+  ```
+- **B. Standalone chip beside the banner.** Smaller change, but it still reads as two separate objects.
+- **C. Icon-only trigger** (`:material/memory:` + dot). Quietest, but the least discoverable.
+
+## 12.4 Implementation steps (Option A)
+1. **`axiom_ui_chrome.render_workspace_header`**
+   - Wrap the header in `st.container(key="ws_header")` with columns `[4, 1]`.
+   - Keep the eyebrow + h2 strings, but drop the card styling from the inner HTML so there is no double border.
+   - Right-align the status column.
+2. **`axiom_ui_status`**
+   - `summarize_status` returns `(state, label, tooltip)`, where state is `ok`, `idle` or `error`.
+   - The label is just the provider name (`Local AI` / `Gemini` / `Rules only`). The state detail moves into `help=`.
+   - Wrap the popover in `st.container(key=f"ws_status_{state}")` and set `use_container_width=False`.
+   - States: `idle` = the active provider is offline. `error` = a background job is in error, or the active provider reports a failure.
+3. **Popover contents**
+   - Replace the two inline-styled badges and the daemon card with one tidy 3-row list (`.axiom-status-row`): the active provider, the other provider, and background jobs.
+   - Show the background row only when `AXIOM_DEBUG` is on or a job is running, paused or in error.
+   - Keep the **Open AI settings** button.
+4. **`assets/styles.css`** (all rules scoped to `.st-key-ws_header`)
+   - Card styles for the header container.
+   - Compact chip style for the trigger: transparent background, 1px `#2A2D34` border, 0.78rem text.
+   - A CSS `::before` dot:
+     - ok: filled `#A0A5B1`
+     - idle: hollow `#8E939F` ring
+     - error: filled muted red `#8A6B70`
+   - No glow. Red is used only for real failures.
+   - `.axiom-status-row` styles for the popover list.
+5. **Tests**
+   - Update `tests/test_axiom_ui_status.py`: new labels/states, popover kwargs, list rows instead of badges, background-row visibility.
+   - Update the header assertions in `tests/test_axiom_ui_chrome.py`.
+
+## 12.5 Risks
+- **Streamlit class names.** The CSS relies on `.st-key-<key>` container classes, which exist in Streamlit 1.38+ (we pin 1.67). A future Streamlit DOM change could break the selectors, but the fallback is just the plain default button.
+- **Old badge helpers.** `_render_connection_badge` and `render_global_status_indicator` stay in `axiom_ui_components` (other callers and tests); the header just stops using them.
+- **Verification.** Needs a quick visual check in the browser in all three states: Gemini connected, Local AI offline, background job error.
+
+## 12.6 Implementation status
+✅ Option A implemented:
+- **Header card:** `axiom_ui_chrome.render_workspace_header` now renders one `st.container(key="ws_header")` card holding the title plus the status chip.
+- **Status chip:** `axiom_ui_status` was rewritten.
+  - `provider_state` / `summarize_status` produce the `ok` / `idle` / `error` state and a tooltip.
+  - The chip is wrapped in `st.container(key="ws_status_<state>")`.
+  - The popover body is a `.axiom-status-list` of escaped rows. The background row shows only in debug mode or when jobs are not idle.
+- **CSS:** scoped rules in `assets/styles.css`: `.st-key-ws_header`, the chip, the `::before` dot and `.axiom-status-*`.
+- **Checks:** tests updated in `tests/test_axiom_ui_status.py`; pytest, ruff and the file-length guard all pass.
+
+⏸ Needs a visual check in the browser. Restart Streamlit, because the CSS is cached per process (`_load_base_css` uses `lru_cache`).
+
+
+---
+
+# 13. Header spacing + sidebar organization menu redesign
+
+## 13.1 Goal
+- Give the header card proper top and bottom breathing room.
+- Redesign the left sidebar organization list so it looks like the page links above it: a quiet list, not a stack of boxed buttons.
+
+## 13.2 Analysis (UI expert)
+- **Org rows:** these are stock Streamlit buttons (filled `#262930`, boxed border, centred text). The `●/○ name · count` label is squeezed into a 210–255px sidebar, so long names wrap. They look unrelated to the `st.navigation` links.
+- **Active org:** shown as a loud filled primary button rather than a calm "selected row".
+- **Mixed styles:** the sidebar mixes five treatments (eyebrow, dividers, caption, boxed Settings, boxed Sign out). Settings and Sign out compete visually with the org list.
+- **Header crowding:** `.main .block-container` has only `padding-top: 1.5rem`, and Streamlit's fixed top bar eats into it. The card's own padding is just `.7rem`.
+
+## 13.3 Target sidebar
+```
+ ▣ Inbox                    ← st.navigation (unchanged)
+ ▌Review & Ledger
+ ▣ Loans
+ ORGANIZATIONS
+ ▌▢ BT Property Hol…        active: #24272E + 2px #A0A5B1 left bar
+   ▢ Marine Trust           others: transparent, hover #202329
+ FINANCIAL YEAR
+ [ 2026          ▾ ] [＋]
+ ─────────────────────────
+   ⚙ Settings               quiet rows
+   👤 admin · auto-lock 60 min
+   ⇥ Sign out
+```
+
+## 13.4 Files & steps
+1. **`axiom_ui_chrome.py`** (all widget keys unchanged)
+   - Add a `_sb_label(text)` helper for section labels.
+   - Wrap the org list in `st.container(key="sb_orgs")`. Each button label is just the name, with `icon=":material/domain:"`. The jurisdiction and row count move to `help=`.
+   - Call `get_entity_ledger` only for the active org. This removes a per-org query on every rerun.
+   - Year row: wrap in `st.container(key="sb_year")`, with a "Financial year" label and `label_visibility="collapsed"`.
+   - Footer: wrap in `st.container(key="sb_footer")` with one divider above it.
+     - Settings uses `:material/settings:`, or `:material/close:` when Settings is open.
+     - The user line is `:material/person:` + name.
+     - Sign out uses `:material/logout:`.
+2. **`assets/styles.css`**: append at the end so it overrides the global button rules.
+   - All new rules are prefixed with `[data-testid="stSidebar"] .st-key-sb_*` so they win over the global `!important` rules.
+   - Rows: transparent, left-aligned, ellipsis for long names. Hover `#202329`. Active `#24272E` with a 2px `#A0A5B1` left bar.
+   - `.axiom-sb-label` for section labels.
+   - Widen the sidebar to 240–280px.
+   - Header spacing: block-container `padding-top` 1.5 → 2.75rem. Card padding `.7rem 1.1rem` → `1.15rem 1.5rem`, margin-bottom `.75` → `1.4rem`. Small eyebrow and h2 line-height tweaks.
+3. **`tests/test_axiom_ui_chrome.py`**
+   - The org label becomes the plain entity name.
+   - Assert the `sb_orgs` container exists.
+   - Assert the row count appears only in the active org's tooltip.
+
+## 13.5 Risks
+- **Unverified selectors:** the button selectors (`.stButton>button[kind="primary"]`, inner `div` alignment) come from reading the code, not the live page. Add `[data-testid="stBaseButton-primary"]` as a fallback selector.
+- **Restart:** Streamlit must be restarted to pick up the CSS, because it is cached per process.
+- **Settings close-on-click:** clicking an org must still close Settings. That behaviour is unchanged and still covered by tests.
+
+## 13.6 Implementation status
+✅ Implemented in `axiom_ui_chrome.py` (sb_orgs / sb_year / sb_footer containers, `_sb_label`, `_org_tooltip` with active-only row count, Material icons, user block) and `assets/styles.css` (header spacing, sidebar 240–280px, scoped list-row styles with `stBaseButton-primary` fallback — test id confirmed present in the bundled Streamlit 1.67 frontend). Tests updated; pytest/ruff/file-length green.
+⏸ Visual check after a Streamlit restart (CSS is cached per process).
+
+## 13.7 Follow-up tweak (user feedback)
+- **Sidebar width:** widened from 240–280px to 290–360px.
+- **Org rows:** names now wrap to two lines (`-webkit-line-clamp: 2`) instead of being cut off with an ellipsis. Row padding raised to `.5rem .65rem`.
+- **Header card:** padding is now `1.2rem 1.6rem 1.7rem` (more space at the bottom), and margin-bottom is now `1.6rem`.
+- **Markdown margin:** Streamlit's negative markdown bottom margin is cancelled inside `.st-key-ws_header`, so the bottom padding actually shows.

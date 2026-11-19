@@ -11,7 +11,7 @@
     max-width: 100% !important;
     padding-left: 1.35rem !important;
     padding-right: 1.35rem !important;
-    padding-top: 1.5rem !important;
+    padding-top: 2.75rem !important;
     box-sizing: border-box !important;
     overflow-x: hidden !important;
 }
@@ -40,8 +40,8 @@
 [data-testid="stSidebar"] {
     background-color: #16181C !important;
     border-right: 1px solid #262930 !important;
-    min-width: 210px !important;
-    max-width: 255px !important;
+    min-width: 290px !important;
+    max-width: 360px !important;
 }
 
 [data-testid="stSidebarNav"] ul li a {
@@ -96,6 +96,169 @@ h1, h2, h3, h4, h5, h6 {
     color: #F3F4F6 !important;
     letter-spacing: -0.01em !important;
 }
+
+/* Workspace header card (plan.md §12): title + AI status chip in one container.
+   `.st-key-<key>` is the class Streamlit adds to st.container(key=...). */
+.st-key-ws_header {
+    background-color: #16181C;
+    border: 1px solid #2A2D34;
+    border-left: 3px solid #A0A5B1;
+    border-radius: 4px;
+    padding: 1.2rem 1.6rem 0.85rem 1.6rem;
+    margin-top: 0.35rem;
+    margin-bottom: 1.6rem;
+    gap: 0 !important;
+}
+
+/* Streamlit gives markdown blocks a negative bottom margin; cancel it inside the
+   header card so the bottom padding is actually visible. */
+.st-key-ws_header [data-testid="stMarkdownContainer"],
+.st-key-ws_header .stMarkdown {
+    margin-bottom: 0 !important;
+}
+
+.axiom-header-title {
+    padding-bottom: 0.15rem;
+}
+
+.axiom-header-title .axiom-eyebrow {
+    display: block;
+    margin-bottom: 0.3rem;
+    line-height: 1.2;
+}
+
+.axiom-header-title h2 {
+    line-height: 1.3 !important;
+}
+
+.axiom-header-title h2 {
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 1.2rem !important;
+    font-weight: 600 !important;
+    color: #F3F4F6 !important;
+    letter-spacing: -0.01em !important;
+}
+
+/* Status chip: right-aligned, quiet, with a CSS dot coloured by state */
+.st-key-ws_status_ok,
+.st-key-ws_status_idle,
+.st-key-ws_status_error {
+    align-items: flex-end !important;
+}
+
+.st-key-ws_header [data-testid="stPopover"] {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.st-key-ws_header [data-testid="stPopover"] button {
+    background-color: transparent !important;
+    border: 1px solid #2A2D34 !important;
+    border-radius: 999px !important;
+    padding: 0.2rem 0.75rem !important;
+    min-height: 0 !important;
+    color: #C9CCD3 !important;
+    box-shadow: none !important;
+}
+
+.st-key-ws_header [data-testid="stPopover"] button p {
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.01em;
+}
+
+.st-key-ws_header [data-testid="stPopover"] button:hover {
+    background-color: #202329 !important;
+    border-color: #3A3F4B !important;
+    color: #F3F4F6 !important;
+}
+
+.st-key-ws_header [data-testid="stPopover"] button p::before {
+    content: "";
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    margin-right: 0.45rem;
+    vertical-align: 0.05rem;
+    box-sizing: border-box;
+}
+
+.st-key-ws_status_ok [data-testid="stPopover"] button p::before {
+    background-color: #A0A5B1;
+}
+
+.st-key-ws_status_idle [data-testid="stPopover"] button p::before {
+    background-color: transparent;
+    border: 1.5px solid #8E939F;
+}
+
+.st-key-ws_status_error [data-testid="stPopover"] button {
+    border-color: #5A4A4E !important;
+}
+
+.st-key-ws_status_error [data-testid="stPopover"] button p::before {
+    background-color: #8A6B70;
+}
+
+/* Popover body: simple status list */
+.axiom-status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 16rem;
+    margin-bottom: 0.5rem;
+}
+
+.axiom-status-row {
+    display: grid;
+    grid-template-columns: 0.9rem 1fr auto;
+    align-items: center;
+    padding: 0.4rem 0.1rem;
+    border-bottom: 1px solid #22252B;
+    font-size: 0.82rem;
+}
+
+.axiom-status-row:last-child {
+    border-bottom: none;
+}
+
+.axiom-status-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    box-sizing: border-box;
+}
+
+.axiom-status-ok .axiom-status-dot { background-color: #A0A5B1; }
+.axiom-status-idle .axiom-status-dot { border: 1.5px solid #8E939F; }
+.axiom-status-error .axiom-status-dot { background-color: #8A6B70; }
+
+.axiom-status-name {
+    color: #E2E4E9;
+    font-weight: 500;
+}
+
+.axiom-status-active {
+    margin-left: 0.4rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8E939F;
+    border: 1px solid #3A3F4B;
+    border-radius: 3px;
+    padding: 0 0.3rem;
+}
+
+.axiom-status-detail {
+    color: #8E939F;
+    font-size: 0.74rem;
+    text-align: right;
+    padding-left: 0.75rem;
+}
+
+.axiom-status-error .axiom-status-detail { color: #B8A3A7; }
 
 .axiom-panel {
     background-color: #1A1C20;
@@ -259,4 +422,166 @@ h1, h2, h3, h4, h5, h6 {
     color: #D0D4DC !important;
     border-radius: 4px !important;
     box-shadow: none !important;
+}
+
+/* Streamlit >= 1.4x main container test id (mirrors `.main .block-container`). */
+[data-testid="stMainBlockContainer"] {
+    padding-top: 2.75rem !important;
+}
+
+/* ------------------------------------------------------------------------
+   Sidebar redesign (plan.md §13). Scoped with [data-testid="stSidebar"] +
+   `.st-key-sb_*` (st.container keys) so it overrides the global button rules.
+   ------------------------------------------------------------------------ */
+.axiom-sb-label {
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #6C727F;
+    margin: 1.1rem 0 0.35rem 0.55rem;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs,
+[data-testid="stSidebar"] .st-key-sb_footer {
+    gap: 0.1rem !important;
+}
+
+/* List rows: org switcher + footer actions */
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button {
+    background-color: transparent !important;
+    border: none !important;
+    border-left: 2px solid transparent !important;
+    border-radius: 4px !important;
+    color: #A0A5B1 !important;
+    font-weight: 500 !important;
+    letter-spacing: 0 !important;
+    padding: 0.38rem 0.6rem !important;
+    min-height: 0 !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button > div,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button > div {
+    justify-content: flex-start !important;
+    width: 100%;
+    min-width: 0;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button p,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button p {
+    font-size: 0.86rem !important;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* Force left alignment through every wrapper Streamlit puts inside a button
+   (button > div > [icon] + stMarkdownContainer > p), which default to centred. */
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton,
+[data-testid="stSidebar"] .st-key-sb_orgs [data-testid="stTooltipHoverTarget"],
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button {
+    width: 100% !important;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button,
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button div,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button div,
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button span,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button span {
+    justify-content: flex-start !important;
+    text-align: left !important;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button [data-testid="stMarkdownContainer"] {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button p,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button p {
+    text-align: left !important;
+    margin: 0 !important;
+}
+
+/* Org names: wrap to at most two lines instead of truncating early */
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button {
+    padding: 0.5rem 0.65rem !important;
+    align-items: flex-start !important;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button p {
+    white-space: normal;
+    line-height: 1.3 !important;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-word;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button:hover,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button:hover {
+    background-color: #202329 !important;
+    color: #E2E4E9 !important;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button:focus,
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button:focus {
+    background-color: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+/* Active org (and "Close settings" while Settings is open) */
+[data-testid="stSidebar"] .st-key-sb_orgs .stButton button[kind="primary"],
+[data-testid="stSidebar"] .st-key-sb_orgs [data-testid="stBaseButton-primary"],
+[data-testid="stSidebar"] .st-key-sb_footer .stButton button[kind="primary"],
+[data-testid="stSidebar"] .st-key-sb_footer [data-testid="stBaseButton-primary"] {
+    background-color: #24272E !important;
+    border-left: 2px solid #A0A5B1 !important;
+    color: #F3F4F6 !important;
+    font-weight: 600 !important;
+}
+
+[data-testid="stSidebar"] .st-key-sb_orgs [data-testid="stIconMaterial"],
+[data-testid="stSidebar"] .st-key-sb_footer [data-testid="stIconMaterial"] {
+    color: #7D828F !important;
+    font-size: 1.05rem !important;
+}
+
+/* Financial year row */
+[data-testid="stSidebar"] .st-key-sb_year {
+    padding: 0 0.15rem;
+}
+
+/* Footer: divider above Settings / user / Sign out */
+[data-testid="stSidebar"] .st-key-sb_footer {
+    margin-top: 1.1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #262930;
+}
+
+.axiom-sb-user {
+    display: flex;
+    flex-direction: column;
+    padding: 0.45rem 0.6rem 0.2rem 0.6rem;
+}
+
+.axiom-sb-user-name {
+    color: #E2E4E9;
+    font-size: 0.84rem;
+    font-weight: 500;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.axiom-sb-user-meta {
+    color: #6C727F;
+    font-size: 0.7rem;
 }

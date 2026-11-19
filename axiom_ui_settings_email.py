@@ -23,7 +23,7 @@ from axiom_loan_crud import (
     get_due_loan_reminders,
     get_loan_reminder_log,
 )
-from axiom_ui_loans import render_property_loans_block
+from axiom_nav import LOANS_PAGE
 
 
 def render_email_tab() -> None:
@@ -71,7 +71,7 @@ def render_email_tab() -> None:
             st.rerun()
     with tc3:
         if st.button("🏦 Open Property Loans Page →", key="_btn_goto_loans", use_container_width=True):
-            st.switch_page("pages/4_Property_Loans.py")
+            st.switch_page(LOANS_PAGE)
     _due = get_due_loan_reminders()
     if _due:
         st.warning(f"{len(_due)} loan milestone(s) currently inside the reminder window and not yet emailed:")
@@ -83,11 +83,4 @@ def render_email_tab() -> None:
     if _log:
         st.markdown('<div class="axiom-eyebrow">RECENT REMINDER EMAIL LOG</div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame(_log)[["sent_at", "property_name", "milestone_type", "expiry_date", "recipient_email", "status", "trigger_source"]], use_container_width=True, hide_index=True)
-
-    st.markdown('<div class="axiom-divider" style="margin: 0.75rem 0;"></div>', unsafe_allow_html=True)
-    render_property_loans_block(
-        key_prefix="settings_email_loans",
-        eyebrow_title="PROPERTY LOANS & BANK REGISTRY — PROPERTIES & WHAT EACH LOAN IS (BT PROPERTY HOLDINGS LTD)",
-        show_page_title=False,
-    )
 

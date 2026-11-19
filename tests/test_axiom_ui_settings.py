@@ -136,16 +136,27 @@ def test_drawer_open_renders_tabs_and_delegates(monkeypatch):
 
     tabs = [entry for entry in log if entry[0] == "tabs"]
     assert len(tabs) == 1
-    assert len(tabs[0][1]) == 7
-    assert "01 // Organizations & Properties" in tabs[0][1][0]
+    assert tabs[0][1] == [
+        "Organizations & properties",
+        "AI & connections",
+        "Accounts & security",
+        "Email & reminders",
+    ]
 
-    assert set(calls) >= {"editor", "loans_calls", "dropzone", "pipeline", "matrix"}
-    assert calls["dropzone"][1]["key_prefix"] == "settings_bulk_up"
-    assert calls["pipeline"][1]["key_prefix"] == "settings_file_board"
-    loan_prefixes = {kwargs["key_prefix"] for _, kwargs in calls["loans_calls"]}
-    assert loan_prefixes == {"settings_loans_tab", "settings_email_loans"}
-    assert calls["matrix"][1]["key_prefix"] == "settings_matrix"
+    assert "editor" in calls
+    # Loans, upload board and item setup have their own pages; Settings no longer embeds them.
+    assert not {"loans_calls", "dropzone", "pipeline", "matrix"} & set(calls)
     assert any("SYSTEM CONFIGURATION" in text for text in texts(log, "markdown"))
+
+
+def test_email_tab_links_to_loans_page(monkeypatch):
+    from axiom_nav import LOANS_PAGE
+
+    fake = FakeSt(session=dict(BASE_SESSION), clicks={"_btn_goto_loans"})
+    patch_settings(monkeypatch, fake)
+    log = run_render(settings.render_right_settings_drawer, fake)
+
+    assert ("switch_page", [LOANS_PAGE], {}) in log
 
 
 def test_drawer_surfaces_all_flash_messages(monkeypatch):

@@ -174,7 +174,7 @@ def render_property_loans_block(
     Renders on:
       - Front Page (Step 2 / Second Block for BT Property Holdings Ltd)
       - Settings Drawer (⚙ Settings -> Property Loans & Reminders)
-      - Dedicated Property Loans Page (pages/4_Property_Loans.py)
+      - Dedicated Loans page (views/loans.py)
     """
     ctx = build_loan_block_context(key_prefix)
 

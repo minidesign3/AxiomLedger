@@ -1,20 +1,24 @@
+"""Axiom Ledger router: login gate, global chrome, and ``st.navigation``.
+
+Page bodies live in ``views/`` and are registered in ``axiom_nav``. The router
+renders the sidebar + slim workspace header once per run; if Settings is open,
+``render_workspace_header`` shows only Settings and stops before the page runs.
+"""
+
 import streamlit as st
 
+from axiom_nav import build_navigation_pages, page_identity
 from utils import (
     apply_custom_styles,
-    format_tax_year_period,
-    get_active_entity,
-    get_active_tax_year,
     get_authenticator,
-    get_entity_jurisdiction,
-    render_entity_ingestion_pipeline,
     render_sidebar_session,
     render_workspace_header,
+    run_loan_reminder_check_once_per_session,
     sync_and_touch_auth_session,
 )
 
 st.set_page_config(
-    page_title="Axiom Ledger | Upload & File Board",
+    page_title="Axiom Ledger",
     page_icon="▪",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -66,33 +70,14 @@ if not auth_status:
     sync_and_touch_auth_session(authenticator)
     apply_custom_styles(authenticated=True)
 
-# Authenticated state: render persistent sidebar & workspace toolbar
-# Note: Company/Entity editing and adding is strictly inside ⚙ Settings only.
-render_sidebar_session(authenticator)
+try:
+    run_loan_reminder_check_once_per_session()
+except Exception:
+    pass
+
+# Navigation is resolved first so the sidebar page list stays visible even while
+# Settings is open; the selected page only runs after the chrome is rendered.
+current_page = st.navigation(build_navigation_pages(), position="sidebar")
+render_sidebar_session(authenticator, current_page=page_identity(current_page))
 render_workspace_header(show_status_indicator=True)
-
-active_entity = get_active_entity()
-active_tax_year = get_active_tax_year()
-active_jur = get_entity_jurisdiction(active_entity)
-period_label = format_tax_year_period(active_tax_year, active_entity)
-
-# Quick Top Navigation Bar between Front Upload Board and Codes/Master Ledger
-top_nav1, top_nav2 = st.columns([2.8, 1.2])
-with top_nav1:
-    st.markdown(
-        f'<div class="axiom-eyebrow">UPLOAD &amp; 4-COLUMN FILE BOARD // {active_entity.upper()} &mdash; {period_label.upper()}</div>',
-        unsafe_allow_html=True,
-    )
-with top_nav2:
-    if st.button(
-        "Open Item + Property Setup & Master Ledger →",
-        key="_front_goto_codes_dashboard",
-        use_container_width=True,
-    ):
-        st.switch_page("pages/1_Dashboard.py")
-
-render_entity_ingestion_pipeline(
-    active_entity=active_entity,
-    active_tax_year=active_tax_year,
-    key_prefix="front_board",
-)
+current_page.run()

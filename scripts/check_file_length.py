@@ -5,6 +5,9 @@ Guardrail against the ``utils.py`` God-module ever happening again.
 
 Rules
 -----
+* Soft alert: ``WARN_LINES`` (400) physical lines per ``*.py`` file. Files
+  over this print a non-fatal warning so growth gets noticed early, before a
+  file reaches the hard cap.
 * Default hard cap: ``MAX_LINES`` (500) physical lines per ``*.py`` file.
 * A grandfather allow-list (``.axiom_file_length_allow.txt``) lets specific
   files temporarily exceed the cap with an explicit, **shrink-only** ceiling:
@@ -27,6 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ALLOW_FILE = ROOT / ".axiom_file_length_allow.txt"
+WARN_LINES = 400
 MAX_LINES = 500
 
 # Directories never scanned (vendored / data / caches / protected per AGENTS.md).
@@ -90,6 +94,7 @@ def main(argv: list[str]) -> int:
     tighten = "--tighten" in argv
     allow = _load_allow()
     failures: list[str] = []
+    warnings: list[str] = []
     new_allow = dict(allow)
 
     for path in _iter_py_files():
@@ -113,11 +118,18 @@ def main(argv: list[str]) -> int:
                 f"{rel}: {n} lines > hard cap {MAX_LINES} "
                 f"(split it, or add a shrink-only allow-list entry)"
             )
+        elif n > WARN_LINES:
+            warnings.append(f"{rel}: {n} lines (> {WARN_LINES}, approaching the {MAX_LINES} cap)")
 
     if tighten:
         _write_allow(new_allow)
         print(f"Allow-list ratcheted ({len(new_allow)} entries remain).")
         return 0
+
+    if warnings:
+        print(f"File-length ALERT ({WARN_LINES}-{MAX_LINES} lines — plan to split soon):")
+        for w in sorted(warnings, reverse=True):
+            print(f"  ::warning:: {w}")
 
     if failures:
         print("File-length guard FAILED:")
@@ -126,7 +138,10 @@ def main(argv: list[str]) -> int:
         print(f"\nCap is {MAX_LINES} lines/file. See CONTRIBUTING.md.")
         return 1
 
-    print(f"File-length guard OK (cap {MAX_LINES}, {len(allow)} grandfathered).")
+    print(
+        f"File-length guard OK (warn {WARN_LINES}, cap {MAX_LINES}, "
+        f"{len(warnings)} in alert zone, {len(allow)} grandfathered)."
+    )
     return 0
 
 

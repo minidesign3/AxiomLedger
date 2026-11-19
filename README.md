@@ -26,16 +26,18 @@ python -m venv .venv
 |----------|---------|---------|
 | `AXIOM_ADMIN_BCRYPT_HASH` | Bcrypt hash for the bootstrap admin login. **Set this in production.** | built-in bootstrap hash |
 | `AXIOM_CODES_XLSX` | Absolute path to an optional `Codes.xlsx` auto-import workbook. | legacy desktop path |
+| `AXIOM_DEBUG` | Set to `1` to show the demo **Background Jobs** page in navigation. | off |
 | AI / SMTP settings | Managed in-app via the ⚙ Settings drawer and persisted in the local store. | — |
 
 ## Project layout
 
 ```
-app.py                     # Login gate + front "Upload & File Board"
-pages/1_Dashboard.py       # Item/Property setup, Master Ledger, Accountant pivot
-pages/2_Data_Ingestion.py  # Ingestion board (wrapper)
-pages/3_Script_Manager.py  # Background worker supervisor (demonstration mode)
-pages/4_Property_Loans.py  # NZ loan & mortgage registry (wrapper)
+app.py                     # Router: login gate, sidebar/header chrome, st.navigation
+axiom_nav.py               # Page registry + switch_page constants
+views/inbox.py             # 📥 Inbox — upload & 4-column file board
+views/ledger.py            # ✅ Review & Ledger — master ledger, accountant export, properties, rules
+views/loans.py             # 🏦 Loans — NZ loan & mortgage registry
+views/jobs.py              # 🛠 Background Jobs — demo supervisor (only with AXIOM_DEBUG=1)
 axiom_core.py              # Pure, stateless, unit-tested helpers (no Streamlit)
 utils.py                   # Application module (DB, auth, AI/OCR, loans, UI)
 scripts/sanitize_fixture.py# Generates sanitized fixtures for safe development

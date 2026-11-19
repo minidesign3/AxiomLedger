@@ -3,9 +3,10 @@ axiom_ui_settings
 =================
 
 System & Organization Settings drawer (phase D21): the drawer shell + the
-Organizations/Properties, Loans, Files and Item+Property tabs. AI, Email and
-Operator-account tabs live in their own modules so every file stays under the
-500-line cap.
+Organizations/Properties tab. AI, Email and Operator-account tabs live in their
+own modules so every file stays under the 500-line cap. Loans, the upload board
+and Item + Property setup were removed from Settings (plan.md §11) because they
+have their own pages (Loans, Inbox, Review & Ledger).
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ import re
 import streamlit as st
 
 from axiom_entities import add_new_entity, rename_entity
-from axiom_ingestion import get_entity_uploaded_files
 from axiom_ledger import get_entity_ledger
 from axiom_memory import _save_memory_store
 from axiom_state import (
@@ -25,23 +25,20 @@ from axiom_state import (
     get_entity_options,
 )
 from axiom_ui_components import _render_entity_edit_popover, render_property_editor_widget
-from axiom_ui_ingestion import render_entity_ingestion_pipeline
-from axiom_ui_ingestion_upload import _render_bulk_upload_dropzone
-from axiom_ui_loans import render_property_loans_block
 from axiom_ui_settings_accounts import render_accounts_tab
 from axiom_ui_settings_ai import render_ai_tab
 from axiom_ui_settings_email import render_email_tab
-from axiom_ui_setup_matrix import render_item_property_setup_matrix
 
 
 def render_right_settings_drawer() -> None:
     """
     Render the structured, full-width System & Organization Settings panel when
     `st.session_state["show_settings_drawer"]` is True.
-    Organized into three clean, scannable tabs:
-      1. Organizations & Entities: Manage entities, create portfolios, and rename via far-right 📌 pin icon.
-      2. AI & API Connections: Select active AI provider and configure/verify Gemini Cloud & Local Qwen endpoints.
-      3. Operator Accounts & Security: View operator roster, update credentials, or provision/remove accounts.
+    Organized into four tabs:
+      1. Organizations & properties: Manage entities, create portfolios, and rename via far-right 📌 pin icon.
+      2. AI & connections: Select active AI provider and configure/verify Gemini Cloud & Local Qwen endpoints.
+      3. Accounts & security: View operator roster, update credentials, or provision/remove accounts.
+      4. Email & reminders: SMTP configuration and loan-expiry reminder emails.
     """
     if not st.session_state.get("show_settings_drawer", False):
         return
@@ -49,26 +46,19 @@ def render_right_settings_drawer() -> None:
     with st.container(border=True):
         _render_settings_header()
 
-        tab_orgs, tab_loans, tab_files, tab_item_prop, tab_ai, tab_accounts, tab_email = st.tabs(
+        # Loans, Upload board and Item + Property setup live on their own pages
+        # (Loans / Inbox / Review & Ledger), so Settings only holds configuration.
+        tab_orgs, tab_ai, tab_accounts, tab_email = st.tabs(
             [
-                "01 // Organizations & Properties",
-                "02 // Property Loans & Bank Registry (BT Property Holdings)",
-                "03 // Upload & 4-Column File Table",
-                "04 // Item + Property Setup (Insurance, Loan Interest, Rent)",
-                "05 // AI & API Connections",
-                "06 // Operator Accounts & Security",
-                "07 // Email (SMTP) & Reminders",
+                "Organizations & properties",
+                "AI & connections",
+                "Accounts & security",
+                "Email & reminders",
             ]
         )
 
         with tab_orgs:
             render_orgs_tab()
-        with tab_loans:
-            render_loans_tab()
-        with tab_files:
-            render_files_tab()
-        with tab_item_prop:
-            render_item_prop_tab()
         with tab_ai:
             render_ai_tab()
         with tab_email:
@@ -83,8 +73,8 @@ def _render_settings_header() -> None:
         st.markdown(
             """
             <div class="axiom-settings-drawer" style="margin-bottom: 0.25rem;">
-                <div class="axiom-eyebrow">SYSTEM CONFIGURATION &amp; ORGANIZATION CONTROL PANEL</div>
-                <h3 style="margin: 0; font-size: 1.1rem;">Organizations, AI Providers &amp; Operator Security</h3>
+                <div class="axiom-eyebrow">SYSTEM CONFIGURATION</div>
+                <h3 style="margin: 0; font-size: 1.1rem;">Settings</h3>
             </div>
             """,
             unsafe_allow_html=True,
@@ -194,40 +184,3 @@ def render_orgs_tab() -> None:
         unsafe_allow_html=True,
     )
     render_property_editor_widget(entity=active_entity, key_prefix="settings_prop_mgr")
-
-
-def render_loans_tab() -> None:
-    render_property_loans_block(
-        key_prefix="settings_loans_tab",
-        eyebrow_title="SETTINGS // PROPERTY LOANS & BANK REGISTRY — PROPERTIES & WHAT EACH LOAN IS (BT PROPERTY HOLDINGS LTD)",
-        show_page_title=False,
-    )
-
-
-def render_files_tab() -> None:
-    active_entity_f = get_active_entity()
-    active_tax_year_f = get_active_tax_year()
-    files_list_f = get_entity_uploaded_files(active_entity_f, active_tax_year_f)
-    _render_bulk_upload_dropzone(
-        active_entity=active_entity_f,
-        active_tax_year=active_tax_year_f,
-        files_list=files_list_f,
-        key_prefix="settings_bulk_up",
-        eyebrow_label="UPLOAD ALL FILES AT ONCE &mdash; AUTO-SAVED TO SQLITE &amp; DISK VAULT",
-    )
-    st.markdown("<div style='height: 0.35rem;'></div>", unsafe_allow_html=True)
-    render_entity_ingestion_pipeline(
-        active_entity=active_entity_f,
-        active_tax_year=active_tax_year_f,
-        key_prefix="settings_file_board",
-        include_loans_block=False,
-    )
-
-
-def render_item_prop_tab() -> None:
-    render_item_property_setup_matrix(
-        entity=get_active_entity(),
-        tax_year=get_active_tax_year(),
-        key_prefix="settings_matrix",
-    )
-

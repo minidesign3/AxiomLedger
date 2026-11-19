@@ -6,7 +6,7 @@ deterministic dependency fakes; no real authentication or ledger data involved.
 
 from __future__ import annotations
 
-from ui_recorder import FakeSt, RerunSignal, run_render
+from ui_recorder import FakeSt, run_render
 
 import axiom_ui_chrome as chrome
 
@@ -70,12 +70,7 @@ def patch_chrome(monkeypatch, fake, calls=None, results=None, *, gem_ok=True, lo
     monkeypatch.setattr(chrome, "add_new_tax_year", event("add_year"))
     monkeypatch.setattr(chrome, "_save_memory_store", event("save_memory"))
     monkeypatch.setattr(chrome, "render_right_settings_drawer", event("settings"))
-    monkeypatch.setattr(chrome, "render_global_status_indicator", event("status"))
-    monkeypatch.setattr(
-        chrome,
-        "_render_connection_badge",
-        lambda label, status, is_selected=False: f"BADGE {label} {bool(status)} {is_selected}",
-    )
+    monkeypatch.setattr(chrome, "render_status_popover", event("status"))
     monkeypatch.setattr(chrome, "sign_out_current_session", event("sign_out"))
     return calls
 
@@ -84,57 +79,63 @@ def run_header(fake, *, status=False):
     return run_render(chrome.render_workspace_header, fake, status)
 
 
-def test_header_renders_banner_badges_and_year_pills(monkeypatch):
+def run_sidebar(fake, auth=None, current_page=None):
+    return run_render(chrome.render_sidebar_session, fake, auth or object(), current_page)
+
+
+def test_header_is_one_line_banner_plus_status_popover(monkeypatch):
     fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR})
-    patch_chrome(monkeypatch, fake)
+    calls = patch_chrome(monkeypatch, fake)
     log = run_header(fake)
 
     markdown = "\n".join(texts(log, "markdown"))
-    assert "ORGANIZATION WORKSPACE" in markdown
-    assert "2025 PERIOD" in markdown
-    assert any(text.startswith("BADGE GEMINI") for text in markdown.splitlines())
-    assert any(text.startswith("BADGE LOCAL AI") for text in markdown.splitlines())
-    assert "_top_toolbar_settings_btn" in buttons(log)
-    assert "_fy_pill_btn_2024" in buttons(log)
-    assert "button" in names(log)
+    assert "NZ IRD" in markdown
+    assert "TAX PERIOD 2025 PERIOD" in markdown
+    assert f"{ENTITY} &mdash; FY {YEAR}" in markdown
+    # Decluttered: no header Settings button, no year pills, no per-provider badges.
+    assert buttons(log) == []
+    assert ("status", (), {"show_background": False}) in calls
 
 
-def test_header_status_indicator_column(monkeypatch):
+def test_header_status_popover_includes_background_when_requested(monkeypatch):
     fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR})
     calls = patch_chrome(monkeypatch, fake)
     run_header(fake, status=True)
-    assert ("status", (), {}) in calls
+    assert ("status", (), {"show_background": True}) in calls
 
 
 def test_header_drawer_open_renders_only_settings(monkeypatch):
     fake = FakeSt(session={"active_entity": ENTITY, "show_settings_drawer": True})
     calls = patch_chrome(monkeypatch, fake)
 
-    run_header(fake)
+    log = run_header(fake)
 
     assert calls == [("init", (), {}), ("settings", (), {})]
+    assert ("stop",) in log
 
 
-def test_header_click_year_switches_year(monkeypatch):
-    fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR}, clicks={"_fy_pill_btn_2026"})
+def test_sidebar_year_selector_syncs_and_callback_switches_year(monkeypatch):
+    fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR})
     patch_chrome(monkeypatch, fake)
+    log = run_sidebar(fake)
 
-    try:
-        run_header(fake)
-    except RerunSignal:
-        pass
+    selects = [entry for entry in log if entry[0] == "selectbox"]
+    assert selects and selects[0][1][1] == ["2024", "2025", "2026"]
+    assert fake.session_state[chrome.YEAR_SELECT_KEY] == YEAR
 
+    fake.session_state[chrome.YEAR_SELECT_KEY] = "2026"
+    chrome._on_year_selected()
     assert fake.session_state["active_tax_year"] == "2026"
 
 
-def test_header_add_year_failure_shows_error(monkeypatch):
+def test_sidebar_add_year_failure_shows_error(monkeypatch):
     fake = FakeSt(
         session={"active_entity": ENTITY, "active_tax_year": YEAR},
         clicks={"_btn_confirm_add_year"},
         values={"_popover_new_tax_year_input": "2020"},
     )
     patch_chrome(monkeypatch, fake, results={"add_year": (False, "Year must be after 2024")})
-    log = run_header(fake)
+    log = run_sidebar(fake)
 
     assert "Year must be after 2024" in texts(log, "error")
 
@@ -143,26 +144,68 @@ def test_sidebar_lists_orgs_and_switches_workspace(monkeypatch):
     fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR}, clicks={"_sidebar_org_btn_1_Marine Trust"})
     calls = patch_chrome(monkeypatch, fake)
 
-    try:
-        run_render(chrome.render_sidebar_session, fake, object())
-    except RerunSignal:
-        pass
+    run_sidebar(fake)
 
-    labels = texts(fake.log, "button")
-    assert any(f"{ENTITY} [NZ IRD] (2)" in str(label) for label in labels)
+    org_buttons = [e for e in fake.log if e[0] == "button" and str(e[2].get("key", "")).startswith("_sidebar_org_btn_")]
+    assert [e[1][0] for e in org_buttons] == [ENTITY, "Marine Trust"]
+    assert org_buttons[0][2]["type"] == "primary"
+    assert org_buttons[0][2]["icon"] == ":material/domain:"
+    assert "2 rows in FY 2025" in org_buttons[0][2]["help"]
+    assert "click to switch" in org_buttons[1][2]["help"]
+    assert ("container", [], {"key": "sb_orgs"}) in fake.log
     assert fake.session_state["active_entity"] == "Marine Trust"
     assert ("save_memory", (), {}) in calls
 
 
-def test_sidebar_signout_calls_auth(monkeypatch):
+def test_sidebar_counts_rows_only_for_active_org(monkeypatch):
+    fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR})
+    patch_chrome(monkeypatch, fake)
+    counted = []
+    monkeypatch.setattr(chrome, "get_entity_ledger", lambda e, y: counted.append(e) or [])
+
+    run_sidebar(fake)
+
+    assert counted == [ENTITY]
+
+
+def test_sidebar_has_single_settings_toggle(monkeypatch):
+    fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR}, clicks={"_sidebar_open_settings_btn"})
+    patch_chrome(monkeypatch, fake)
+
+    log = run_sidebar(fake)
+
+    assert buttons(log).count("_sidebar_open_settings_btn") == 1
+    assert fake.session_state["show_settings_drawer"] is True
+
+
+def test_sidebar_page_change_closes_settings(monkeypatch):
+    fake = FakeSt(
+        session={
+            "active_entity": ENTITY,
+            "active_tax_year": YEAR,
+            "show_settings_drawer": True,
+            "_last_rendered_page": "inbox|Inbox",
+        }
+    )
+    patch_chrome(monkeypatch, fake)
+
+    run_sidebar(fake, current_page="inbox|Inbox")
+    assert fake.session_state["show_settings_drawer"] is True
+
+    run_sidebar(fake, current_page="ledger|Review & Ledger")
+    assert fake.session_state["show_settings_drawer"] is False
+    assert fake.session_state["_last_rendered_page"] == "ledger|Review & Ledger"
+
+
+def test_sidebar_signout_calls_auth_and_reruns(monkeypatch):
     fake = FakeSt(session={"active_entity": ENTITY, "active_tax_year": YEAR}, clicks={"_sidebar_explicit_signout_btn"})
     calls = patch_chrome(monkeypatch, fake)
     auth = object()
 
-    run_render(chrome.render_sidebar_session, fake, auth)
+    log = run_sidebar(fake, auth)
 
     assert ("sign_out", (auth,), {}) in calls
-    assert "switch_page" in names(fake.log)
+    assert ("rerun",) in log
 
 
 def test_utils_reexports_chrome_api():

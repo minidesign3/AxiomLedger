@@ -12,7 +12,7 @@ repos:
   - repo: local
     hooks:
       - id: axiom-file-length
-        name: No Python file over 500 lines (shrink-only allow-list)
+        name: No Python file over 500 lines (alert at 400, shrink-only allow-list)
         entry: python scripts/check_file_length.py
         language: system
         pass_filenames: false

@@ -23,7 +23,7 @@ jobs:
       - name: Ruff (lint + function-size/complexity rules)
         run: ruff check .
 
-      - name: File-length guard (no file > 500 lines)
+      - name: File-length guard (alert > 400 lines, fail > 500 lines)
         run: python scripts/check_file_length.py
 
       - name: Tests

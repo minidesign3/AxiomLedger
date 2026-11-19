@@ -1,3 +1,8 @@
+"""Background Jobs: demo thread supervisor (was ``pages/3_Script_Manager.py``).
+
+Only registered in navigation when ``AXIOM_DEBUG=1`` (see ``axiom_nav``).
+"""
+
 from datetime import datetime
 
 import streamlit as st
@@ -6,26 +11,14 @@ from utils import (
     get_background_status_summary,
     init_workspace_state,
     pause_background_task,
-    render_workspace_header,
-    require_auth,
     start_background_task,
     stop_background_task,
     trigger_background_task_error,
 )
 
-st.set_page_config(
-    page_title="Axiom Ledger | Script Manager",
-    page_icon="▪",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-require_auth()
 init_workspace_state()
-render_workspace_header(show_status_indicator=True)
 
-st.markdown('<div class="axiom-eyebrow">MODULE 03 // BACKGROUND THREAD SUPERVISOR</div>', unsafe_allow_html=True)
-st.title("Background Script Manager")
+st.title("Background Jobs")
 st.caption(
     "⚠ Demonstration mode: these worker threads emit heartbeat and log telemetry to "
     "showcase the supervisor UI. They do not yet perform live PDF extraction, OCR, or "

@@ -5,11 +5,13 @@
 These rules exist because the project once had a single **11,000-line
 `utils.py`** God-module. They prevent that from ever recurring.
 
-1. **No Python file over 500 lines.** Enforced by
-   `scripts/check_file_length.py` (and pre-commit + CI). A file that must
-   temporarily exceed it goes in `.axiom_file_length_allow.txt` with an explicit
-   ceiling that may only ever **shrink** (run the script with `--tighten` to
-   ratchet it down, never up). The goal is to empty that file.
+1. **No Python file over 500 lines; 400 lines is the early-warning alert.**
+   Enforced by `scripts/check_file_length.py` (and pre-commit + CI). Files
+   over 400 lines print a non-fatal `::warning::` so growth gets caught before
+   it becomes a problem; files over 500 lines **fail** the build. A file that
+   must temporarily exceed 500 goes in `.axiom_file_length_allow.txt` with an
+   explicit ceiling that may only ever **shrink** (run the script with
+   `--tighten` to ratchet it down, never up). The goal is to empty that file.
 
 2. **No giant functions.** Ruff enforces `C901` (complexity ≤ 15),
    `PLR0915` (≤ 80 statements), `PLR0912` (≤ 20 branches), `PLR0913`

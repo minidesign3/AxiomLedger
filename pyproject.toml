@@ -36,7 +36,7 @@ max-args = 8
 
 [tool.ruff.lint.per-file-ignores]
 # Pages intentionally run module-level Streamlit side effects on import.
-"pages/*.py" = ["E402"]
+"views/*.py" = ["E402"]
 "app.py" = ["E402"]
 # utils.py is the legacy God-module being decomposed (phases D1-D23). Its
 # oversized functions and long-standing dead-assignment hints are grandfathered
