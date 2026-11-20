@@ -50,6 +50,7 @@ from axiom_core import (
     is_uncategorized,
 )
 from axiom_loan_crud import get_property_loans
+from axiom_pm_rows import pm_match_text
 
 # The model menu is UI-facing config still defined in utils.py (used heavily by
 # the settings drawer). Reached lazily inside functions to avoid a cycle rather
@@ -194,8 +195,9 @@ def apply_rule_categorization(
     for _, row in result.iterrows():
         curr_prop = str(row.get("Property", "")).strip()
         curr_code = str(row.get("Account Code", "")).strip()
+        # PM-statement rows match on their PM category only (see axiom_pm_rows)
         matched_prop, matched_code, _ = utils.match_memorized_or_rule(
-            row.get("Description", ""),
+            pm_match_text(row.get("Description", "")),
             entity=resolved_entity,
         )
 

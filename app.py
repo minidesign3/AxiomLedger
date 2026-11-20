@@ -11,6 +11,8 @@ from axiom_nav import build_navigation_pages, page_identity
 from utils import (
     apply_custom_styles,
     get_authenticator,
+    init_workspace_state,
+    is_loan_target_entity,
     render_sidebar_session,
     render_workspace_header,
     run_loan_reminder_check_once_per_session,
@@ -77,7 +79,13 @@ except Exception:
 
 # Navigation is resolved first so the sidebar page list stays visible even while
 # Settings is open; the selected page only runs after the chrome is rendered.
-current_page = st.navigation(build_navigation_pages(), position="sidebar")
+# Workspace state is initialised first so the Loans page is only registered
+# for the loan-target entity (switching org reruns and rebuilds this list).
+init_workspace_state()
+current_page = st.navigation(
+    build_navigation_pages(show_loans=is_loan_target_entity()),
+    position="sidebar",
+)
 render_sidebar_session(authenticator, current_page=page_identity(current_page))
 render_workspace_header(show_status_indicator=True)
 current_page.run()

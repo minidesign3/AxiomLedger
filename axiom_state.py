@@ -103,7 +103,6 @@ def format_tax_year_period(tax_year: str | None = None, entity: str | None = Non
 
 def init_workspace_state() -> None:
     """Initialize global workspace state variables, dynamic entities/years, and background task manager."""
-    import os
 
     store = _load_memory_store()
 
@@ -159,7 +158,15 @@ def init_workspace_state() -> None:
             saved_cat_model if saved_cat_model in CATEGORIZATION_MODEL_OPTIONS else CATEGORIZATION_MODEL_OPTIONS[0]
         )
 
-    saved_gem_key = str(store.get("google_genai_api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
+    # The key lives outside the project (env var or ~/.config/axiomledger, 0600); a key
+    # still sitting in the plain-text memory store is migrated there and blanked.
+    from axiom_memory import _invalidate_memory_store_cache, _save_memory_store_unconditional
+    from axiom_secrets import load_gemini_key, migrate_key_out_of_store
+
+    if migrate_key_out_of_store(store):
+        _save_memory_store_unconditional(store)
+        _invalidate_memory_store_cache()
+    saved_gem_key = load_gemini_key()
     if "google_genai_api_key" not in st.session_state or not str(st.session_state.get("google_genai_api_key") or "").strip():
         st.session_state["google_genai_api_key"] = saved_gem_key
 

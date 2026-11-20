@@ -32,11 +32,61 @@ from axiom_parsing import (
     extract_other_document_tables,
     extract_pdf_tables,
 )
+from axiom_pm_statements import PDF_NO_TABLE_NOTE, describe_pdf_check
 from axiom_properties import get_entity_properties
 from axiom_rules import save_memorized_rule
 from axiom_state import get_active_entity, get_active_tax_year, init_workspace_state
 from axiom_traffic import evaluate_row_traffic_light
 from axiom_vault import get_vault_dir
+
+PDF_NO_TABLE_RETRIED_NOTE = "Saved PDF to Vault. No structured table found (auto-retry done)."
+
+
+def _record_vault_path(rec: dict[str, object]) -> Path | None:
+    vpath = str(rec.get("vault_path", "") or "")
+    vp = Path(vpath) if vpath else None
+    if vp and not vp.is_absolute():
+        vp = Path(__file__).resolve().parent / vp
+    return vp if vp and vp.exists() and vp.is_file() else None
+
+
+def _backfill_pdf_check_notes(entity: str, tax_year: str, records: list[dict[str, object]]) -> None:
+    """One-time ✅/⚠️ reconciliation note for PDFs imported before the check existed.
+
+    Only the note is updated — the stored (possibly user-edited) rows are never
+    replaced. If a fresh read yields a different row count the note says so, since
+    the stored rows came from an older parser.
+    """
+    for rec in records:
+        df_cur = rec.get("df")
+        if str(rec.get("bucket", "")) != "pdf" or str(rec.get("note", "") or "").strip():
+            continue
+        if not isinstance(df_cur, pd.DataFrame) or df_cur.empty:
+            continue
+        vp = _record_vault_path(rec)
+        if vp is None:
+            continue
+        try:
+            fresh = extract_pdf_tables(vp.read_bytes())
+        except Exception:
+            continue
+        stored_desc = sorted(df_cur["Description"].fillna("").astype(str)) if "Description" in df_cur else []
+        # Only PM parsers return final rows; generic table output isn't comparable.
+        pm_parsed = list(fresh.columns) == STANDARD_COLUMNS
+        fresh_desc = sorted(fresh["Description"].fillna("").astype(str)) if pm_parsed else stored_desc
+        if len(fresh) != len(df_cur):
+            rec["note"] = (
+                f"⚠️ Saved rows ({len(df_cur)}) differ from a fresh read of this PDF ({len(fresh)}) — "
+                "delete the file and re-upload it to refresh."
+            )
+        elif stored_desc != fresh_desc:
+            rec["note"] = (
+                "⚠️ Saved rows use an older import format — delete the file and re-upload it so "
+                "coding rules apply per PM category."
+            )
+        else:
+            rec["note"] = describe_pdf_check(fresh)
+        _save_file_record_to_sqlite(entity, tax_year, rec)
 
 
 def _reconcile_vault_and_broken_csvs(
@@ -51,10 +101,15 @@ def _reconcile_vault_and_broken_csvs(
     """
     changed = False
     existing_names = {str(r.get("name", "")).strip() for r in records}
+    _backfill_pdf_check_notes(entity, tax_year, records)
 
-    # 1. Repair 0-row CSVs that have a valid vault file on disk
+    # 1. Repair 0-row CSVs / PDFs that have a valid vault file on disk
     for rec in records:
-        if str(rec.get("bucket", "")) == "csv":
+        rec_bucket = str(rec.get("bucket", ""))
+        # PDFs are retried only while they still carry the original "no table" note
+        # (rewritten after one failed retry) so unparseable PDFs aren't re-read every load.
+        pdf_retry = rec_bucket == "pdf" and str(rec.get("note", "")) == PDF_NO_TABLE_NOTE
+        if rec_bucket == "csv" or pdf_retry:
             df_cur = rec.get("df")
             if not isinstance(df_cur, pd.DataFrame) or df_cur.empty:
                 vpath = str(rec.get("vault_path", "") or "")
@@ -63,7 +118,10 @@ def _reconcile_vault_and_broken_csvs(
                     vp = Path(__file__).resolve().parent / vp
                 if vp and vp.exists() and vp.is_file():
                     try:
-                        raw_df = _read_bank_csv_bytes(vp.read_bytes())
+                        vbytes = vp.read_bytes()
+                        raw_df = (
+                            _read_bank_csv_bytes(vbytes) if rec_bucket == "csv" else extract_pdf_tables(vbytes)
+                        )
                         if not raw_df.empty:
                             norm_df = (
                                 raw_df.copy()
@@ -73,9 +131,12 @@ def _reconcile_vault_and_broken_csvs(
                             if not norm_df.empty:
                                 cat_df = apply_rule_categorization(norm_df, entity=entity)
                                 rec["df"] = cat_df
-                                rec["note"] = ""
+                                rec["note"] = describe_pdf_check(raw_df) if rec_bucket == "pdf" else ""
                                 _save_file_record_to_sqlite(entity, tax_year, rec)
                                 changed = True
+                        elif pdf_retry:
+                            rec["note"] = PDF_NO_TABLE_RETRIED_NOTE
+                            _save_file_record_to_sqlite(entity, tax_year, rec)
                     except Exception:
                         pass
 
@@ -99,6 +160,7 @@ def _reconcile_vault_and_broken_csvs(
                     raw_df = _read_bank_csv_bytes(fbytes)
                 elif b_key == "pdf":
                     raw_df = extract_pdf_tables(fbytes)
+                    parse_note = describe_pdf_check(raw_df)
                 elif b_key == "screenshots":
                     needs_ocr = True
                     parse_note = "Recovered from Vault — click '🔍 Run AI OCR' or open file."
@@ -156,6 +218,12 @@ def _reconcile_vault_and_broken_csvs(
         ]
         combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=STANDARD_COLUMNS)
         _save_master_ledger_to_sqlite(entity, tax_year, combined)
+        # Drop any ledger already cached this session so it reloads the repaired rows
+        try:
+            st.session_state.setdefault("_sqlite_loaded_ledgers", set()).discard(f"{entity}::{tax_year}")
+            st.session_state.get("entity_year_ledgers", {}).get(entity, {}).pop(tax_year, None)
+        except Exception:
+            pass
 
     return records
 

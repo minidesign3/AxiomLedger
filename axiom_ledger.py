@@ -191,10 +191,15 @@ def _load_uploaded_files_from_sqlite(entity: str, tax_year: str) -> list[dict[st
                     elif b_key == "pdf":
                         raw_p = extract_pdf_tables(fbytes)
                         if not raw_p.empty:
-                            norm_p = normalize_financial_dataframe(raw_p)
+                            norm_p = (
+                                raw_p.copy()
+                                if list(raw_p.columns) == STANDARD_COLUMNS
+                                else normalize_financial_dataframe(raw_p)
+                            )
                             rec_df = apply_rule_categorization(norm_p, entity=entity)
-                        else:
-                            rec_note = "Saved PDF to Vault. No structured table found automatically."
+                        from axiom_pm_statements import describe_pdf_check
+
+                        rec_note = describe_pdf_check(raw_p)
                     elif b_key == "screenshots":
                         rec_needs_ocr = True
                         rec_note = "Saved in Vault — click '🔍 Run OCR on Screenshots' or open file to extract."
@@ -267,9 +272,17 @@ def export_entity_vault_zip(entity: str | None = None, tax_year: str | None = No
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        from axiom_accountant_pack import build_accountant_pack, pack_filename
+        from axiom_state import get_entity_jurisdiction
+
         master_df = get_entity_ledger(target_entity, target_year)
-        master_csv_bytes = export_xero_master_csv(master_df)
+        master_csv_bytes = export_xero_master_csv(master_df, jurisdiction=get_entity_jurisdiction(target_entity))
         zf.writestr(f"{ent_dir}_{yr_dir}_Master_Coded_Ledger.csv", master_csv_bytes)
+        try:
+            pack_bytes, _ = build_accountant_pack(target_entity, target_year)
+            zf.writestr(pack_filename(target_entity, target_year), pack_bytes)
+        except Exception as exc:  # never block the ZIP of original files
+            zf.writestr("ACCOUNTANT_PACK_ERROR.txt", f"Accountant pack could not be built: {exc}")
 
         if vault_folder.exists():
             for file_path in sorted(vault_folder.rglob("*")):

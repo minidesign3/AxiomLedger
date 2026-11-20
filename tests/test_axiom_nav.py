@@ -31,8 +31,17 @@ def test_workspace_pages_are_named_and_ordered(fake_pages, monkeypatch):
 
     assert list(sections) == ["Workspace"]
     titles = [p.title for p in sections["Workspace"]]
-    assert titles == ["Inbox", "Review & Ledger", "Loans"]
-    assert [p.default for p in sections["Workspace"]] == [True, False, False]
+    assert titles == ["Inbox", "Review & Ledger", "Loans", "Ask Axiom"]
+    assert [p.default for p in sections["Workspace"]] == [True, False, False, False]
+
+
+def test_loans_page_hidden_for_entities_without_loans(fake_pages, monkeypatch):
+    monkeypatch.delenv("AXIOM_DEBUG", raising=False)
+    sections = nav.build_navigation_pages(show_loans=False)
+
+    pages = sections["Workspace"]
+    assert [p.title for p in pages] == ["Inbox", "Review & Ledger", "Ask Axiom"]
+    assert nav.LOANS_PAGE not in {p.page for p in pages}
 
 
 @pytest.mark.parametrize("flag", ["1", "true", "YES"])

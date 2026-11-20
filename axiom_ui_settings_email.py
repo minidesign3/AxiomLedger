@@ -22,6 +22,8 @@ from axiom_loan_crud import (
     check_and_send_due_loan_reminders,
     get_due_loan_reminders,
     get_loan_reminder_log,
+    get_loan_target_entity,
+    is_loan_target_entity,
 )
 from axiom_nav import LOANS_PAGE
 
@@ -70,7 +72,16 @@ def render_email_tab() -> None:
             st.session_state["_smtp_flash"] = (_n > 0, f"Sent {_n} reminder(s). " + (" | ".join(_msgs) if _msgs else "No reminders due in the 2-month window."))
             st.rerun()
     with tc3:
-        if st.button("🏦 Open Property Loans Page →", key="_btn_goto_loans", use_container_width=True):
+        # Loans is only registered in st.navigation for the loan-target entity;
+        # switch_page to an unregistered page raises, so disable it elsewhere.
+        _loans_available = is_loan_target_entity()
+        if st.button(
+            "🏦 Open Property Loans Page →",
+            key="_btn_goto_loans",
+            use_container_width=True,
+            disabled=not _loans_available,
+            help=None if _loans_available else f"Switch to {get_loan_target_entity()} to manage property loans.",
+        ):
             st.switch_page(LOANS_PAGE)
     _due = get_due_loan_reminders()
     if _due:

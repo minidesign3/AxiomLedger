@@ -185,7 +185,14 @@ def _save_memory_store(store: dict[str, object] | None = None) -> None:
     if "active_tax_year" in st.session_state:
         target["active_tax_year"] = str(st.session_state["active_tax_year"])
     if "google_genai_api_key" in st.session_state:
-        target["google_genai_api_key"] = str(st.session_state["google_genai_api_key"] or "").strip()
+        # Never persist the key in the DB / .axiom_memory.json — private file instead (axiom_secrets)
+        from axiom_secrets import load_gemini_key, save_gemini_key
+
+        session_key = str(st.session_state["google_genai_api_key"] or "").strip()
+        # An empty session value never deletes the stored key (it may simply not be loaded yet)
+        if session_key and session_key != load_gemini_key():
+            save_gemini_key(session_key)
+    target["google_genai_api_key"] = ""
     if "categorization_model" in st.session_state:
         target["categorization_model"] = str(st.session_state["categorization_model"])
     if "local_llm_url" in st.session_state:

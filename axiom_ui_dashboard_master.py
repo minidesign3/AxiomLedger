@@ -30,10 +30,18 @@ from axiom_core import (
 from axiom_dataframe import export_xero_master_csv
 from axiom_ingestion import get_entity_uploaded_files, get_file_red_counts
 from axiom_ledger import get_entity_ledger, is_property_unassigned, set_entity_ledger
+from axiom_ledger_sync import save_ledger_everywhere
+from axiom_pm_rows import detect_pm_double_count
 from axiom_properties import get_entity_properties, is_portfolio_wide_code
 from axiom_rules import save_memorized_rule
-from axiom_state import format_tax_year_period, get_active_entity, get_active_tax_year
+from axiom_state import (
+    format_tax_year_period,
+    get_active_entity,
+    get_active_tax_year,
+    get_entity_jurisdiction,
+)
 from axiom_traffic import compute_traffic_light_columns
+from axiom_ui_export_pack import render_accountant_export_panel
 
 
 def render_dashboard_master_tab() -> None:
@@ -47,6 +55,10 @@ def render_dashboard_master_tab() -> None:
     properties_list = get_entity_properties(active_entity)
 
     _render_master_controls(active_entity, active_tax_year, ledger_df, stats)
+
+    double_count_warning = detect_pm_double_count(ledger_df)
+    if double_count_warning:
+        st.error(double_count_warning)
 
     if ledger_df.empty:
         st.info(
@@ -88,7 +100,7 @@ def _render_master_controls(
         safe_entity_slug = re.sub(r"[^a-zA-Z0-9]+", "_", active_entity).strip("_").lower()
         safe_year_slug = re.sub(r"[^a-zA-Z0-9]+", "_", str(active_tax_year)).strip("_")
         export_filename = f"axiom_master_{safe_entity_slug}_{safe_year_slug}.csv"
-        csv_bytes = export_xero_master_csv(ledger_df)
+        csv_bytes = export_xero_master_csv(ledger_df, jurisdiction=get_entity_jurisdiction(active_entity))
 
         st.download_button(
             label="⬇ Export Master CSV",
@@ -111,7 +123,8 @@ def _render_master_controls(
 
     if run_rules_clicked:
         updated_df = apply_rule_categorization(ledger_df, entity=active_entity)
-        set_entity_ledger(updated_df, active_entity, active_tax_year)
+        # Write to the file records too, so a later file-level re-sync can't undo it
+        save_ledger_everywhere(updated_df, active_entity, active_tax_year)
         st.success(f"Applied Item & Property Rules to {active_entity} ({active_tax_year}).")
         st.rerun()
 
@@ -126,7 +139,7 @@ def _render_master_controls(
                     api_key=st.session_state.get("google_genai_api_key", ""),
                     entity=active_entity,
                 )
-                set_entity_ledger(updated_df, active_entity, active_tax_year)
+                save_ledger_everywhere(updated_df, active_entity, active_tax_year)
                 st.success(f"AI Categorized {resolved_num:,} row(s).")
                 st.rerun()
             except Exception as exc:
@@ -244,7 +257,8 @@ def _save_master_tab_edits(
                 entity=active_entity,
                 source="Master Ledger Confirmed",
             )
-    set_entity_ledger(full_updated, active_entity, active_tax_year)
+    # Master-sheet edits used to update only the ledger and were lost on the next file save
+    save_ledger_everywhere(full_updated, active_entity, active_tax_year)
     st.success("Saved Master Ledger and memorized your confirmed Item + Property rules as 🟢 100% Sure.")
     st.rerun()
 
@@ -306,6 +320,9 @@ def render_dashboard_accountant_tab() -> None:
     if ledger_df.empty:
         st.info(f"No transactions recorded yet for {active_entity} in {active_tax_year} ({period_label}).")
     else:
+        # Readiness checklist (includes the PM double-count check) + one-file Accountant Pack
+        render_accountant_export_panel(active_entity, active_tax_year)
+        st.markdown('<div class="axiom-divider"></div>', unsafe_allow_html=True)
         sum_c1, sum_c2 = st.columns(2)
         with sum_c1:
             st.markdown(

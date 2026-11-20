@@ -15,8 +15,11 @@ import pandas as pd
 
 from axiom_core import is_uncategorized
 from axiom_ledger import is_property_unassigned
+from axiom_pm_rows import is_pm_row, pm_match_text
 from axiom_rules import match_memorized_or_rule
 from axiom_state import get_active_entity
+
+PM_UNCONFIRMED_BADGE = "🟡 Check PM Item — Save & Confirm once to memorize this category"
 
 
 def evaluate_row_traffic_light(
@@ -55,7 +58,7 @@ def evaluate_row_traffic_light(
     # Both Item and Property are present! Check whether this row is backed by a 100% certain Memorized Rule
     desc_str = "" if pd.isna(description) else str(description).strip()
     if desc_str:
-        _, _, match_src = match_memorized_or_rule(desc_str, entity=resolved_entity)
+        _, _, match_src = match_memorized_or_rule(pm_match_text(desc_str), entity=resolved_entity)
         if match_src in ("Memorized", "Loan Match", "Aligned Vendor+House"):
             return "green", "🟢 100% Sure (Matched Rule)"
         if match_src == "Keyword Rule":
@@ -63,6 +66,9 @@ def evaluate_row_traffic_light(
         if match_src == "Memorized Partial":
             # Rule matched the item, and property is now filled
             return "green", "🟢 100% Sure (Rule + House)"
+        # PM-statement rows are only green once a rule on their PM category matched
+        if is_pm_row(desc_str):
+            return "yellow", PM_UNCONFIRMED_BADGE
         # If match_src == "Unknown" yet both code & property are populated, it was either pre-coded in the file or AI-guessed
         return "green", "🟢 100% Coded"
 
@@ -118,9 +124,10 @@ def compute_traffic_light_columns(
             badges.append("🟢 100% Coded")
             continue
 
-        if desc_str not in match_cache:
-            _, _, match_cache[desc_str] = match_memorized_or_rule(desc_str, entity=resolved_entity)
-        match_src = match_cache[desc_str]
+        match_text = pm_match_text(desc_str)
+        if match_text not in match_cache:
+            _, _, match_cache[match_text] = match_memorized_or_rule(match_text, entity=resolved_entity)
+        match_src = match_cache[match_text]
 
         if match_src in ("Memorized", "Loan Match", "Aligned Vendor+House"):
             tiers.append("green")
@@ -131,6 +138,9 @@ def compute_traffic_light_columns(
         elif match_src == "Memorized Partial":
             tiers.append("green")
             badges.append("🟢 100% Sure (Rule + House)")
+        elif is_pm_row(desc_str):
+            tiers.append("yellow")
+            badges.append(PM_UNCONFIRMED_BADGE)
         else:
             tiers.append("green")
             badges.append("🟢 100% Coded")

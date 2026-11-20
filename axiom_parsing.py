@@ -36,6 +36,14 @@ def extract_pdf_tables(pdf_bytes: bytes) -> pd.DataFrame:
             "pdfplumber is required for PDF table extraction. Install it via `pip install pdfplumber`."
         ) from exc
 
+    # Property-manager statements (e.g. Charlton) are text-laid-out with no ruled
+    # tables, so extract_tables() finds nothing; parse their known layouts first.
+    from axiom_pm_statements import attach_check, parse_pm_statement_pdf
+
+    pm_df = parse_pm_statement_pdf(pdf_bytes)
+    if pm_df is not None:
+        return pm_df
+
     extracted_frames: list[pd.DataFrame] = []
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -68,7 +76,8 @@ def extract_pdf_tables(pdf_bytes: bytes) -> pd.DataFrame:
     if not extracted_frames:
         return pd.DataFrame()
 
-    return pd.concat(extracted_frames, ignore_index=True)
+    # Not a recognised layout: tag it so the file note warns the user to verify it.
+    return attach_check(pd.concat(extracted_frames, ignore_index=True), "generic_tables", [])
 
 def parse_xlsx_without_openpyxl(file_bytes: bytes) -> dict[str, pd.DataFrame]:
     """

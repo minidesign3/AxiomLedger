@@ -29,6 +29,7 @@ from axiom_core import (
 )
 from axiom_dataframe import normalize_financial_dataframe
 from axiom_db import _delete_file_record_from_sqlite, _save_file_record_to_sqlite
+from axiom_dedupe import find_same_content_record
 from axiom_ingestion import get_entity_uploaded_files, sync_entity_ledger_from_files
 from axiom_ledger import append_entity_ledger, get_entity_ledger, set_entity_ledger
 from axiom_ocr import extract_screenshot_structured_gemini, save_screenshot_ocr_markdown
@@ -37,6 +38,7 @@ from axiom_parsing import (
     extract_other_document_tables,
     extract_pdf_tables,
 )
+from axiom_pm_statements import describe_pdf_check
 from axiom_properties import add_entity_property
 from axiom_rules import save_memorized_rule
 from axiom_state import get_active_entity, get_active_tax_year
@@ -147,11 +149,12 @@ def ingest_uploaded_file_object(
     for existing in files_list:
         if existing.get("signature") == file_sig or str(existing.get("name", "")).strip() == fname:
             existing_df = existing.get("df")
-            # If previously failed CSV parse (0 rows), allow re-parsing now
+            # If previously failed CSV/PDF parse (0 rows), allow re-parsing now
+            existing_note = str(existing.get("note", "")).lower()
             if (
-                bucket == "csv"
+                bucket in ("csv", "pdf")
                 and (not isinstance(existing_df, pd.DataFrame) or existing_df.empty)
-                and "parse warning" in str(existing.get("note", "")).lower()
+                and ("parse warning" in existing_note or "no structured table" in existing_note)
             ):
                 files_list.remove(existing)
                 _delete_file_record_from_sqlite(str(existing.get("id", "")), delete_vault_file=False)
@@ -160,6 +163,19 @@ def ingest_uploaded_file_object(
                 run_ocr_on_screenshot_record(existing, entity=target_entity, tax_year=target_year)
                 return True, f"Updated OCR for '{fname}'.", existing
             return True, f"'{fname}' is already saved in the {bucket.upper()} vault.", existing
+
+    # Same contents already imported under another name (e.g. a bank export saved twice)
+    same_content = find_same_content_record(fbytes, files_list)
+    if same_content is not None:
+        dup_msg = (
+            f"'{fname}' has exactly the same contents as already-imported "
+            f"'{same_content.get('name')}' — not imported again (it would double-count)."
+        )
+        try:
+            st.toast(f"⚠️ {dup_msg}")
+        except Exception:
+            pass
+        return True, dup_msg, same_content
 
     # Save raw file bytes to organized local File Vault on disk (`data/vault/<Company>/<Year>/<Bucket>/<Filename>`)
     vault_path = _save_raw_file_to_vault(target_entity, target_year, bucket, fname, fbytes)
@@ -174,8 +190,8 @@ def ingest_uploaded_file_object(
             raw_df = _read_bank_csv_bytes(fbytes)
         elif bucket == "pdf":
             raw_df = extract_pdf_tables(fbytes)
-            if raw_df.empty:
-                parse_note = "Saved PDF to Vault. No structured table found automatically."
+            # ✅ reconciled / ⚠️ mismatch, unverified or unrecognised / no-table note
+            parse_note = describe_pdf_check(raw_df)
         elif bucket == "screenshots":
             has_api_key = bool(st.session_state.get("google_genai_api_key", "").strip())
             mime_type = getattr(uploaded_file, "type", None) or (

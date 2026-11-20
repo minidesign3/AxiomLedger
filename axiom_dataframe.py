@@ -27,12 +27,18 @@ from axiom_core import (
 )
 
 
-def export_xero_master_csv(df: pd.DataFrame) -> bytes:
+def export_xero_master_csv(df: pd.DataFrame, jurisdiction: str | None = None) -> bytes:
     """
     Format the standardized DataFrame as a Xero-ready CSV:
     - UTF-8 encoded
     - Strictly no commas in amounts (plain decimal numbers, e.g. 1250.50 or -450.00)
+    - With ``jurisdiction``: every Date in one format (NZ dd/mm/yyyy, US mm/dd/yyyy)
     """
+    if jurisdiction and df is not None and not df.empty:
+        from axiom_dates import normalize_date
+
+        df = df.copy()
+        df["Date"] = [normalize_date(v, jurisdiction)[0] for v in df["Date"]]
     if df is None or df.empty:
         empty_df = pd.DataFrame(columns=STANDARD_COLUMNS)
         return empty_df.to_csv(index=False, encoding="utf-8").encode("utf-8")

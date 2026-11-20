@@ -14,9 +14,12 @@ import streamlit as st
 
 from axiom_core import UNASSIGNED_PROPERTY
 from axiom_properties import is_portfolio_wide_code
-from axiom_rules import replace_memorized_rules
+from axiom_rules import collapse_memorized_rules, replace_memorized_rules
+from axiom_ui_setup_bulk_delete import render_bulk_toolbar, row_checkbox
 from axiom_ui_setup_common import MatrixContext, RulesView, reapply_rules_and_sync
 from axiom_ui_setup_editor import render_rule_editor_panel
+
+_ROW_COLS = [0.3, 1.35, 0.88, 1.07, 0.42, 0.42]
 
 
 def render_saved_rules_card(ctx: MatrixContext) -> None:
@@ -43,9 +46,19 @@ def _render_rules_filter_bar(ctx: MatrixContext) -> tuple[str, str, str, str]:
     hdr_c1, hdr_c2, hdr_c3, hdr_c4, hdr_c5 = st.columns([1.45, 0.9, 0.85, 0.72, 0.78])
     with hdr_c1:
         st.markdown(
-            f'<div class="axiom-eyebrow">SAVED ITEM + PROPERTY RULES ({len(memorized_list)} CONFIGURED) &mdash; CLICK ✏️ EDIT OR 📋 COPY ON ANY ROW</div>',
+            f'<div class="axiom-eyebrow">SAVED ITEM + PROPERTY RULES ({len(memorized_list)} CONFIGURED) &mdash; TICK ☑️ TO BULK DELETE, OR CLICK ✏️ EDIT / 📋 COPY ON ANY ROW</div>',
             unsafe_allow_html=True,
         )
+        if st.button(
+            "🧹 Merge duplicate rules",
+            key=f"_{key_prefix}_merge_dupes_{resolved_entity}",
+            help="Merge rules that only differ by a monthly reference/date (e.g. '| 2025041101').",
+        ):
+            ok_m, msg_m = collapse_memorized_rules(entity=resolved_entity)
+            if ok_m:
+                reapply_rules_and_sync(ctx)
+                st.success(msg_m)
+                st.rerun()
     with hdr_c2:
         search_rule_q = st.text_input(
             "Search Rules",
@@ -175,14 +188,16 @@ def _render_rules_compact_rows(ctx: MatrixContext, view: RulesView) -> None:
         cur_page, page_size = _render_rules_pagination(ctx, view)
 
         # Compact Column Header Row
-        th_c1, th_c2, th_c3, th_c4, th_c5 = st.columns([1.35, 0.88, 1.07, 0.42, 0.42])
+        page_slice = indexed_rules[(cur_page - 1) * page_size : cur_page * page_size]
+        render_bulk_toolbar(ctx, view, [i for i, _ in page_slice])
+        _th_sel, th_c1, th_c2, th_c3, th_c4, th_c5 = st.columns(_ROW_COLS)
+        _th_sel.markdown("<span style='color:#8E939F;font-size:0.73rem;font-weight:600;'>SEL</span>", unsafe_allow_html=True)
         th_c1.markdown("<span style='color:#8E939F;font-size:0.73rem;font-weight:600;'>BANK TEXT / CSV MATCH</span>", unsafe_allow_html=True)
         th_c2.markdown("<span style='color:#8E939F;font-size:0.73rem;font-weight:600;'>1. ITEM (CODE)</span>", unsafe_allow_html=True)
         th_c3.markdown("<span style='color:#8E939F;font-size:0.73rem;font-weight:600;'>2. PROPERTY</span>", unsafe_allow_html=True)
         th_c4.markdown("<span style='color:#8E939F;font-size:0.73rem;font-weight:600;'>EDIT</span>", unsafe_allow_html=True)
         th_c5.markdown("<span style='color:#8E939F;font-size:0.73rem;font-weight:600;'>COPY</span>", unsafe_allow_html=True)
 
-        page_slice = indexed_rules[(cur_page - 1) * page_size : cur_page * page_size]
         for orig_idx, r_info in page_slice:
             _render_rule_row(ctx, view, orig_idx, r_info)
 
@@ -246,7 +261,9 @@ def _render_rule_row(
     active_edit_state_key = view.active_edit_state_key
     active_edit_idx = view.active_edit_idx
     copy_mode_state_key = view.copy_mode_state_key
-    r_c1, r_c2, r_c3, r_c4, r_c5 = st.columns([1.35, 0.88, 1.07, 0.42, 0.42])
+    r_sel, r_c1, r_c2, r_c3, r_c4, r_c5 = st.columns(_ROW_COLS)
+    with r_sel:
+        row_checkbox(ctx, orig_idx)
     is_editing_this = active_edit_idx is not None and int(active_edit_idx) == orig_idx
     pat_text = r_info["Pattern"]
     item_text = r_info["Item"]

@@ -90,6 +90,21 @@ def test_csv_upload_is_parsed_and_synced(env):
     assert env["calls"]["saved"][-1] is rec
 
 
+def test_same_contents_under_new_name_is_not_imported(env, monkeypatch):
+    data = b"Date,Amount,Description\n2026-01-01,-9.99,Coffee\n"
+    existing = {"id": "f1", "name": "bank-export.csv", "bucket": "csv", "df": _frame([]), "raw_bytes": data}
+    env["files"].append(existing)
+    toasts: list[str] = []
+    monkeypatch.setattr(axiom_upload.st, "toast", lambda msg: toasts.append(msg), raising=False)
+
+    ok, msg, rec = axiom_upload.ingest_uploaded_file_object(_Upload("bank-loan-copy.csv", data))
+
+    assert ok is True and rec is existing
+    assert "same contents" in msg and "bank-export.csv" in msg
+    assert env["calls"]["saved"] == [] and env["calls"]["sync"] == 0
+    assert toasts and toasts[0].startswith("⚠️")
+
+
 def test_duplicate_upload_is_not_saved_twice(env):
     upload = _Upload("asb.csv", b"Date,Amount,Description\n2026-01-01,-9.99,Coffee\n")
     existing = {"id": "f1", "name": "asb.csv", "signature": "", "bucket": "csv", "df": _frame([])}

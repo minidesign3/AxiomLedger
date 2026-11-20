@@ -68,6 +68,8 @@ def patch_settings(monkeypatch, fake, calls=None, *, gem_ok=True, loc_ok=True):
         "verify_gemini_connection": lambda key: _status(gem_ok, f"gemini {key}"),
         "verify_local_llm_connection": lambda url: _status(loc_ok, f"local {url}"),
         "_fmt_loan_date": lambda d: f"fmt:{d}",
+        "is_loan_target_entity": lambda entity=None: (entity or ENTITY) == ENTITY,
+        "get_loan_target_entity": lambda: ENTITY,
         "_smtp_recipients": lambda cfg: ["ops@example.com"],
         "get_smtp_config": lambda: {
             "smtp_host": "smtp.example.com",
@@ -157,6 +159,19 @@ def test_email_tab_links_to_loans_page(monkeypatch):
     log = run_render(settings.render_right_settings_drawer, fake)
 
     assert ("switch_page", [LOANS_PAGE], {}) in log
+    loans_btn = next(e for e in log if e[0] == "button" and e[2].get("key") == "_btn_goto_loans")
+    assert loans_btn[2]["disabled"] is False
+
+
+def test_email_tab_disables_loans_link_for_other_entities(monkeypatch):
+    fake = FakeSt(session=dict(BASE_SESSION))
+    patch_settings(monkeypatch, fake)
+    monkeypatch.setattr(email, "is_loan_target_entity", lambda entity=None: False)
+    log = run_render(settings.render_right_settings_drawer, fake)
+
+    loans_btn = next(e for e in log if e[0] == "button" and e[2].get("key") == "_btn_goto_loans")
+    assert loans_btn[2]["disabled"] is True
+    assert ENTITY in loans_btn[2]["help"]
 
 
 def test_drawer_surfaces_all_flash_messages(monkeypatch):

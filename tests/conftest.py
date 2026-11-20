@@ -49,6 +49,14 @@ _MISSING = object()
 
 
 @pytest.fixture(autouse=True)
+def _isolate_secrets_dir(monkeypatch, tmp_path):
+    """Never let tests read or write the user's real Gemini key file (axiom_secrets)."""
+    monkeypatch.setenv("AXIOM_SECRETS_DIR", str(tmp_path / "secrets"))
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_streamlit_session_state():
     """Snapshot/restore the memory-store-related st.session_state keys around each test."""
     try:

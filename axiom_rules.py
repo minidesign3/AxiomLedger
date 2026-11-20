@@ -42,7 +42,9 @@ from axiom_core import (
 )
 from axiom_loan_crud import match_loan_from_text
 from axiom_memory import _load_memory_store, _save_memory_store
+from axiom_pm_rows import pm_rule_pattern
 from axiom_properties import is_portfolio_wide_code
+from axiom_rule_patterns import collapse_duplicate_rules, normalize_rule_pattern
 from axiom_state import get_active_entity
 
 
@@ -74,8 +76,11 @@ def save_memorized_rule(
     for the specified entity and persist to disk.
     """
     resolved = get_active_entity(entity)
-    clean_pat = (pattern or "").strip()
-    clean_prop = (property_name or "").strip() or UNASSIGNED_PROPERTY
+    # PM-statement rows learn one property-less rule per PM category (axiom_pm_rows).
+    raw_pat, pm_row = pm_rule_pattern((pattern or "").strip())
+    # Strip per-transaction refs/dates (e.g. "| 2025041101") so monthly lines share one rule.
+    clean_pat = normalize_rule_pattern(raw_pat)
+    clean_prop = UNASSIGNED_PROPERTY if pm_row else (property_name or "").strip() or UNASSIGNED_PROPERTY
     clean_code = (account_code or "").strip() or "Uncategorized"
     if not clean_pat:
         return False, "Description pattern cannot be empty."
@@ -97,6 +102,9 @@ def save_memorized_rule(
             item["source"] = source
             updated = True
             break
+
+    if not updated and _already_memorized(raw_pat, clean_prop, clean_code, resolved):
+        return True, f"Already covered by an existing rule: '{clean_pat}' → {clean_prop} | {clean_code}"
 
     if not updated:
         current_rules.insert(
@@ -170,6 +178,24 @@ def delete_memorized_rule(pattern: str, entity: str | None = None) -> tuple[bool
     rules_map[resolved] = filtered
     _save_memory_store(store)
     return True, f"Removed memorized rule '{pattern}'."
+
+
+def _already_memorized(raw_text: str, prop: str, code: str, entity: str) -> bool:
+    """True if existing memorized rules already resolve `raw_text` to exactly (`prop`, `code`)."""
+    m_prop, m_code, m_src = match_memorized_or_rule(raw_text, entity=entity)
+    return m_src == "Memorized" and m_prop.lower() == prop.lower() and m_code.lower() == code.lower()
+
+
+def collapse_memorized_rules(entity: str | None = None) -> tuple[bool, str]:
+    """Merge rules that only differ by volatile date/reference tokens (keeps first of each)."""
+    resolved = get_active_entity(entity)
+    store = _load_memory_store()
+    rules_map = store.setdefault("memorized_rules", {})
+    collapsed, removed = collapse_duplicate_rules(list(rules_map.get(resolved, [])))
+    if removed:
+        rules_map[resolved] = collapsed
+        _save_memory_store(store)
+    return True, f"Merged duplicates: removed {removed} rule(s), {len(collapsed)} remain for {resolved}."
 
 
 def replace_memorized_rules(

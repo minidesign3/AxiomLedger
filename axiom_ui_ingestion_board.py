@@ -93,9 +93,14 @@ def _file_status_style(
     green_cnt = c_stats["green"]
     tot_cnt = c_stats["total"]
 
+    f_note = str(f_rec.get("note") or "")
     if f_rec.get("needs_ocr"):
         border_color = "#3B82F6"
         status_line = "🕓 Saved in Vault · Click '🔍 Run AI OCR' or Open File"
+    elif f_note.startswith("⚠️"):
+        # PDF reconciliation warning (totals mismatch / unverified / unrecognised layout)
+        border_color = "#B91C1C"
+        status_line = f_note
     elif (
         bucket_key == "screenshots"
         and tot_cnt == 1
@@ -118,6 +123,8 @@ def _file_status_style(
     else:
         border_color = "#3A3F4B"
         status_line = str(f_rec.get("note") or "0 rows — Click to inspect")
+    if f_note.startswith("✅") and tot_cnt > 0:
+        status_line = f"{status_line} · ✅ Totals match statement"
     return border_color, status_line
 
 

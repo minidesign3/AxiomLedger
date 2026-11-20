@@ -14,6 +14,7 @@ import streamlit as st
 from axiom_core import UNASSIGNED_PROPERTY
 from axiom_properties import is_portfolio_wide_code
 from axiom_rules import replace_memorized_rules, save_memorized_rule
+from axiom_ui_setup_bulk_delete import delete_rules_keep_one
 from axiom_ui_setup_common import EditorDraft, MatrixContext, RulesView, reapply_rules_and_sync
 
 
@@ -324,7 +325,7 @@ def _editor_delete_button(ctx: MatrixContext, view: RulesView) -> None:
         key=f"_{key_prefix}_del_edit_row_{resolved_entity}_{active_edit_idx}",
         use_container_width=True,
     ):
-        updated_list = [r for i_r, r in enumerate(memorized_list) if i_r != int(active_edit_idx)]
+        updated_list = delete_rules_keep_one(memorized_list, {int(active_edit_idx)})
         replace_memorized_rules(updated_list, entity=resolved_entity)
         st.session_state[active_edit_state_key] = None
         st.session_state[copy_mode_state_key] = False

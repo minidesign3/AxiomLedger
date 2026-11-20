@@ -166,6 +166,16 @@ def _render_review_header(ctx: ReviewContext) -> None:
 
     st.markdown('<div class="axiom-divider" style="margin: 0.65rem 0;"></div>', unsafe_allow_html=True)
 
+    # PDF reconciliation result (rows vs the statement's own printed totals)
+    pdf_note = str(file_rec.get("note") or "")
+    if file_rec.get("bucket") == "pdf" and pdf_note:
+        if pdf_note.startswith("⚠️"):
+            st.error(pdf_note)
+        elif pdf_note.startswith("✅"):
+            st.success(pdf_note)
+        else:
+            st.caption(pdf_note)
+
     # If this is a Screenshot, show image preview, OCR button & saved .ocr.md sidecar right at top
     if file_rec.get("bucket") == "screenshots" and file_rec.get("raw_bytes"):
         img_col, ocr_col = st.columns([1.2, 2.8])

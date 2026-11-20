@@ -63,7 +63,12 @@ class TestVerifyGeminiConnection:
         # Persisted back into session state and the (isolated) memory store.
         assert utils.st.session_state["google_genai_api_key"] == "fake-valid-key"
         stored = utils._load_memory_store()
-        assert stored.get("google_genai_api_key") == "fake-valid-key"
+        # The key is never persisted in the plain-text store any more — it goes to the
+        # private secrets file (axiom_secrets; isolated per test by conftest).
+        assert stored.get("google_genai_api_key") == ""
+        import axiom_secrets
+
+        assert axiom_secrets.load_gemini_key() == "fake-valid-key"
 
     def test_auth_error_is_caught_and_reported(self, temp_llm_store, monkeypatch):
         class _FakeClient:

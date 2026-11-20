@@ -86,11 +86,12 @@ class TestCachingBehavior:
 class TestWritePathInvalidation:
     def test_save_memory_store_invalidates_cache(self, temp_memory_store, monkeypatch):
         store = temp_memory_store._load_memory_store()
-        store["google_genai_api_key"] = "fake-key-for-test"
+        # (Uses a non-secret field: the API key is no longer persisted in the store.)
+        store["local_llm_model"] = "fake-model-for-test"
         temp_memory_store._save_memory_store(store)
 
         reloaded = temp_memory_store._load_memory_store()
-        assert reloaded["google_genai_api_key"] == "fake-key-for-test"
+        assert reloaded["local_llm_model"] == "fake-model-for-test"
 
     def test_add_entity_property_is_visible_on_next_load(self, temp_memory_store):
         ok, _msg = temp_memory_store.add_entity_property("Test Street 99", entity="BT Property Holdings Ltd")
